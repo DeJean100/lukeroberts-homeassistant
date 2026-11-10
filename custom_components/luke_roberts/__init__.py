@@ -13,8 +13,8 @@ import time
 
 from homeassistant.components import bluetooth
 from homeassistant.config_entries import ConfigEntry
-from homeassistant.const import CONF_ADDRESS, CONF_NAME, Platform
-from homeassistant.core import HomeAssistant, callback
+from homeassistant.const import CONF_ADDRESS, CONF_NAME, STATE_OFF, STATE_ON, Platform
+from homeassistant.core import Event, EventStateChangedData, HomeAssistant, callback
 from homeassistant.exceptions import (
     ConfigEntryAuthFailed,
     ConfigEntryError,
@@ -23,7 +23,10 @@ from homeassistant.exceptions import (
 )
 from homeassistant.helpers import device_registry as dr
 from homeassistant.helpers.aiohttp_client import async_get_clientsession
-from homeassistant.helpers.event import async_track_time_interval
+from homeassistant.helpers.event import (
+    async_track_state_change_event,
+    async_track_time_interval,
+)
 
 from .account import (
     async_account_api_key,
@@ -40,6 +43,7 @@ from .const import (
     CONF_CLOUD_LAMP_ID,
     CONF_CONNECTION_MODE,
     CONF_LINGER,
+    CONF_POWER_ENTITY,
     DEFAULT_LINGER,
     DOMAIN,
     MODE_CLOUD_ONLY,
@@ -47,6 +51,7 @@ from .const import (
     MODE_LOCAL_ONLY,
 )
 from .lamp import LukeRobertsLamp
+from .power import EntityPowerSwitch
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -132,6 +137,9 @@ async def async_setup_entry(hass: HomeAssistant, entry: LukeRobertsConfigEntry) 
     lamp.ble_present = ble_device is not None
     entry.runtime_data = lamp
 
+    if address and (power_entity := _option(entry, CONF_POWER_ENTITY)):
+        _setup_power_switch(hass, entry, lamp, power_entity)
+
     if address:
         _setup_bluetooth_tracking(hass, entry, lamp, address.upper(), name)
 
@@ -194,6 +202,40 @@ def _setup_bluetooth_tracking(
         bluetooth.async_track_unavailable(
             hass, _async_unavailable, address, connectable=True
         )
+    )
+
+
+@callback
+def _setup_power_switch(
+    hass: HomeAssistant,
+    entry: LukeRobertsConfigEntry,
+    lamp: LukeRobertsLamp,
+    entity_id: str,
+) -> None:
+    """Use a light or switch entity for on/off and follow its state."""
+    lamp.power = EntityPowerSwitch(hass, entity_id)
+
+    @callback
+    def _power_changed(event: Event[EventStateChangedData]) -> None:
+        old = event.data["old_state"]
+        new = event.data["new_state"]
+        lamp.notify()
+        if (
+            old is not None
+            and old.state == STATE_OFF
+            and new is not None
+            and new.state == STATE_ON
+        ):
+            # Power came back (wall switch, automation or the light itself):
+            # read the scene, brightness and colour temperature again. Not
+            # on start-up (old state None), so a lamp switched off in the
+            # app stays off when Home Assistant restarts.
+            entry.async_create_background_task(
+                hass, lamp.power_restored(), f"{entry.title} power restored"
+            )
+
+    entry.async_on_unload(
+        async_track_state_change_event(hass, entity_id, _power_changed)
     )
 
 

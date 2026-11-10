@@ -32,6 +32,10 @@ DEFAULT_LINGER: Final = 30
 
 RESPONSE_TIMEOUT: Final = 5.0
 
+# After switching the power on, how long to wait for the lamp to boot and
+# answer over Bluetooth (it takes a few seconds, more through a proxy).
+POWER_UP_TIMEOUT: Final = 20.0
+
 # --- Cloud (Third party REST API v1.0) --------------------------------------
 CLOUD_BASE_URL: Final = "https://cloud.luke-roberts.com/api/v1"
 CLOUD_APP_URL: Final = "https://cloud.luke-roberts.com/app"
@@ -48,6 +52,7 @@ CONF_CLOUD_LAMP_ID: Final = "cloud_lamp_id"
 CONF_CONNECTION_MODE: Final = "connection_mode"
 CONF_LINGER: Final = "linger"
 CONF_DEFAULT_SCENE: Final = "default_scene"
+CONF_POWER_ENTITY: Final = "power_entity"
 
 MODE_LOCAL_FIRST: Final = "local_first"
 MODE_LOCAL_ONLY: Final = "local_only"

@@ -266,3 +266,36 @@ async def test_options_add_cloud(hass: HomeAssistant, no_setup) -> None:
         CONF_API_KEY: "k",
         CONF_CLOUD_LAMP_ID: 12,
     }
+
+
+async def test_options_power_entity(hass: HomeAssistant, no_setup) -> None:
+    """A power switch can be set and cleared again."""
+    entry = MockConfigEntry(
+        domain=DOMAIN,
+        unique_id=ADDRESS.lower(),
+        data={CONF_ADDRESS: ADDRESS, CONF_NAME: "Lamp"},
+        options={CONF_CONNECTION_MODE: MODE_LOCAL_FIRST, CONF_LINGER: 30},
+    )
+    entry.add_to_hass(hass)
+
+    result = await hass.config_entries.options.async_init(entry.entry_id)
+    result = await hass.config_entries.options.async_configure(
+        result["flow_id"],
+        {
+            CONF_CONNECTION_MODE: MODE_LOCAL_FIRST,
+            CONF_LINGER: 30,
+            "power_entity": "light.dining_power",
+        },
+    )
+    assert result["type"] is FlowResultType.CREATE_ENTRY
+    assert entry.options == {
+        CONF_CONNECTION_MODE: MODE_LOCAL_FIRST,
+        CONF_LINGER: 30,
+        "power_entity": "light.dining_power",
+    }
+
+    result = await hass.config_entries.options.async_init(entry.entry_id)
+    result = await hass.config_entries.options.async_configure(
+        result["flow_id"], {CONF_CONNECTION_MODE: MODE_LOCAL_FIRST, CONF_LINGER: 30}
+    )
+    assert entry.options == {CONF_CONNECTION_MODE: MODE_LOCAL_FIRST, CONF_LINGER: 30}

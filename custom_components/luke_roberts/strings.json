@@ -58,12 +58,14 @@
           "connection_mode": "Connection mode",
           "linger": "Keep Bluetooth connection after the last command",
           "api_key": "Cloud API key (optional)",
-          "firmware_key": "Firmware check key (optional)"
+          "firmware_key": "Firmware check key (optional)",
+          "power_entity": "Power switch (optional)"
         },
         "data_description": {
           "linger": "While connected the Luke Roberts app shows the lamp as in use. 0 disconnects right after each command.",
           "api_key": "Only needed when this lamp should use a different key than the Luke Roberts account. Personal API keys are created at {cloud_url}.",
-          "firmware_key": "Api-Key for the Luke Roberts firmware server. With it the firmware entity shows whether a newer version is available."
+          "firmware_key": "Api-Key for the Luke Roberts firmware server. With it the firmware entity shows whether a newer version is available.",
+          "power_entity": "A light or switch that switches the lamp's power, for example a KNX actuator or a smart plug. On/off then switches the power; brightness, colour temperature and scenes still go over Bluetooth. Leave empty to switch the lamp off with its Off scene."
         }
       },
       "cloud_lamp": {
@@ -167,6 +169,14 @@
           "description": "Revert to the scene after this time (max 65 s). 0 keeps it."
         }
       }
+    }
+  },
+  "exceptions": {
+    "no_power": {
+      "message": "{name}: the lamp has no power; switch it on first."
+    },
+    "no_answer_after_power_on": {
+      "message": "{name}: the lamp did not answer over Bluetooth within {seconds} s after switching the power on ({error})."
     }
   }
 }

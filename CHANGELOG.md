@@ -2,6 +2,16 @@
 
 ## Unreleased
 
+- **Power switch option.** A lamp on a switched circuit (KNX or Shelly
+  actuator, smart plug, relay) can name that light or switch entity as
+  *Power switch* in its options. On/off then switches the power, the light's
+  on/off state follows that entity, and brightness, colour temperature and
+  scenes still go over Bluetooth: after power-up Home Assistant waits for the
+  lamp (about 2 s) before applying them, and reads the lamp's state whenever
+  the power goes from off to on, so the scene picked by the lamp's own
+  power-on and click detection settings is shown. If Home Assistant turned
+  the light on and a very short cut left the lamp in its Off scene, *Default*
+  is selected. Tested with a KNX actuator on a Model F.
 - **Brightness, colour temperature and on/off read from the lamp.** After
   every Bluetooth command, and when the lamp details are read at startup, the
   integration sends the undocumented command `09` (one byte, no `A0` prefix)

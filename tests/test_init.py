@@ -25,7 +25,10 @@ from homeassistant.const import (
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers import device_registry as dr, entity_registry as er
 import pytest
-from pytest_homeassistant_custom_component.common import MockConfigEntry
+from pytest_homeassistant_custom_component.common import (
+    MockConfigEntry,
+    async_mock_service,
+)
 from pytest_homeassistant_custom_component.test_util.aiohttp import AiohttpClientMocker
 
 from custom_components.luke_roberts import protocol
@@ -576,3 +579,48 @@ async def test_account_auth_failure(
     await hass.async_block_till_done()
     flows = hass.config_entries.flow.async_progress()
     assert any(flow["context"]["source"] == "reauth" for flow in flows)
+
+
+async def test_power_switch(hass: HomeAssistant) -> None:
+    """On/off goes through the power entity and the light follows it."""
+    hass.states.async_set("switch.lamp_power", "on")
+    turned_on = async_mock_service(hass, "switch", "turn_on")
+    turned_off = async_mock_service(hass, "switch", "turn_off")
+    client = FakeLampClient()
+    entry = await _setup_ble(hass, client, power_entity="switch.lamp_power")
+    assert hass.states.get(LIGHT).state == STATE_ON
+
+    with patch(
+        "custom_components.luke_roberts.ble.establish_connection",
+        AsyncMock(return_value=client),
+    ):
+        client.written.clear()
+        await hass.services.async_call(
+            LIGHT_DOMAIN, SERVICE_TURN_OFF, {ATTR_ENTITY_ID: LIGHT}, blocking=True
+        )
+        assert len(turned_off) == 1
+        assert client.written == []  # no Off scene over Bluetooth
+
+        # The power entity reports off (wall switch or the call above).
+        hass.states.async_set("switch.lamp_power", "off")
+        await hass.async_block_till_done()
+        state = hass.states.get(LIGHT)
+        assert state.state == STATE_OFF
+        assert state.attributes[ATTR_EFFECT_LIST]  # scenes stay available
+
+        await hass.services.async_call(
+            LIGHT_DOMAIN, SERVICE_TURN_ON, {ATTR_ENTITY_ID: LIGHT}, blocking=True
+        )
+        assert len(turned_on) == 1
+        assert client.written == []  # the lamp restores its own last state
+
+        # Power back on: the lamp is asked for its state again.
+        client.brightness = 30
+        hass.states.async_set("switch.lamp_power", "on")
+        await hass.async_block_till_done(wait_background_tasks=True)
+        state = hass.states.get(LIGHT)
+        assert state.state == STATE_ON
+        assert state.attributes[ATTR_BRIGHTNESS] == 76  # 30 %
+        assert protocol.query_state() in client.written
+
+    assert await hass.config_entries.async_unload(entry.entry_id)

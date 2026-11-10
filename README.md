@@ -117,6 +117,34 @@ Bluetooth link is kept after the last command (default 30 s, 0 disconnects
 immediately) and which cloud lamp it is linked to. An API key entered there
 overrides the account for that lamp only.
 
+### Lamp on a switched circuit (power switch)
+
+Many lamps hang on a switched circuit: a KNX or Shelly actuator, a smart plug,
+a relay behind the wall switch. Pick that light or switch entity as
+**Power switch** in the lamp's **Configure** dialog. The lamp's light then
+works as one device:
+
+- **Off** switches the power off. No Bluetooth needed.
+- **On** switches the power on. The lamp starts with the scene its power-on
+  setting in the Luke Roberts app chooses. With a brightness, colour
+  temperature or scene in the same command, Home Assistant waits until the
+  lamp answers over Bluetooth (about 2 s) and then applies it.
+- **On/off state** follows the power entity, so the wall switch shows up
+  right away. When the power goes from off to on, from any source, the
+  scene, brightness and colour temperature are read from the lamp again.
+- Whatever the lamp does after power-up (its power-on scene, click
+  detection when the wall switch is toggled quickly) is read and shown, not
+  assumed. Only when Home Assistant itself switched the power on to turn the
+  light on and the lamp still reports its Off scene (for example after a cut
+  of under a second, which the lamp rides out on stored charge), *Default*
+  is selected.
+- *Brighter*, *Dimmer* and *Next scene* need power and report an error while
+  it is off.
+
+So there is no need for a template light that combines the two. Leave the
+field empty to switch the lamp off with its Off scene over Bluetooth, as
+before.
+
 ### How lamps are recognised
 
 A Bluetooth advertisement is treated as a Luke Roberts lamp when it contains

@@ -137,8 +137,8 @@ class LukeRobertsLight(LukeRobertsEntity, LightEntity, RestoreEntity):
 
     @property
     def is_on(self) -> bool | None:
-        """Return the assumed on/off state."""
-        return self._lamp.state.is_on
+        """Return on/off: the power switch if one is set, else the lamp."""
+        return self._lamp.is_on
 
     @property
     def brightness(self) -> int | None:

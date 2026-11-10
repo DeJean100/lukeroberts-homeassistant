@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from unittest.mock import AsyncMock, MagicMock
+from unittest.mock import AsyncMock, MagicMock, patch
 
 from bleak.exc import BleakError
 from homeassistant.exceptions import HomeAssistantError
@@ -366,3 +366,166 @@ async def test_next_scene_without_report_is_unknown() -> None:
     lamp.state.scene_id = 2
     await lamp.next_scene(1)
     assert lamp.state.scene_id is None
+
+
+class FakePower:
+    """Power switch stand-in that records calls."""
+
+    def __init__(self, on: bool | None) -> None:
+        self.is_on = on
+        self.calls: list[str] = []
+
+    async def turn_on(self) -> None:
+        self.calls.append("on")
+        self.is_on = True
+
+    async def turn_off(self) -> None:
+        self.calls.append("off")
+        self.is_on = False
+
+
+def _powered_lamp(ble: MagicMock, on: bool | None) -> tuple[LukeRobertsLamp, FakePower]:
+    lamp = _lamp(MODE_LOCAL_FIRST, ble, None)
+    power = FakePower(on)
+    lamp.power = power
+    return lamp, power
+
+
+async def test_power_turn_off_cuts_power() -> None:
+    """With a power switch, off cuts the power; no Bluetooth needed."""
+    ble = _ble()
+    lamp, power = _powered_lamp(ble, True)
+    lamp.state.is_on = True
+    lamp.state.scene_id = 4
+    await lamp.turn_off()
+    assert power.calls == ["off"]
+    ble.request.assert_not_awaited()
+    assert lamp.is_on is False
+    assert lamp.state.scene_id == 4  # left as is; read again at power-up
+
+
+async def test_power_turn_on_plain() -> None:
+    """Plain on only switches the power; the lamp starts its power-up scene."""
+    ble = _ble()
+    lamp, power = _powered_lamp(ble, False)
+    lamp.state.is_on = True
+    await lamp.turn_on()
+    assert power.calls == ["on"]
+    ble.request.assert_not_awaited()
+    ble.request_many.assert_not_awaited()
+    assert lamp.is_on is True
+
+
+async def test_power_turn_on_with_brightness() -> None:
+    """From no power: power on, wait for the lamp, then adjust over BLE."""
+    ble = _ble([b"\x00\x08", _state(2700, 72, True), _state(2700, 40, True)])
+    lamp, power = _powered_lamp(ble, False)
+    await lamp.turn_on(brightness=40)
+    assert power.calls == ["on"]
+    assert ble.request.await_args_list[0].args[0] == protocol.ping()
+    assert ble.request.await_args_list[1].args[0] == protocol.query_state()
+    # The lamp reported on, so no Default scene is selected over its own.
+    ble.request_many.assert_awaited_once_with([protocol.brightness(40)])
+    assert lamp.state.brightness == 40
+    assert lamp.is_on is True
+
+
+async def test_power_turn_on_lamp_soft_off() -> None:
+    """Powered but in its Off scene: Default is selected as without a switch."""
+    ble = _ble([b"\x00\x08", _state(2700, 0, False), _state(2700, 50, True)])
+    lamp, _power = _powered_lamp(ble, False)
+    await lamp.turn_on(brightness=50)
+    ble.request_many.assert_awaited_once_with(
+        [protocol.select_scene(0xFF), protocol.brightness(50)]
+    )
+
+
+async def test_power_turn_on_lamp_does_not_come_back() -> None:
+    """A lamp that stays unreachable after power-up gives a clear error."""
+    ble = _ble(BleakError("not found"))
+    lamp, _power = _powered_lamp(ble, False)
+    lamp.ble_present = False
+    with pytest.raises(HomeAssistantError) as err:
+        await lamp.wait_until_reachable(timeout=0.01)
+    assert err.value.translation_key == "no_answer_after_power_on"
+
+
+async def test_power_state_and_availability() -> None:
+    """On/off follows the power switch first; no power is not unavailable."""
+    lamp, power = _powered_lamp(_ble(), False)
+    lamp.ble_present = False
+    lamp.state.is_on = True
+    assert lamp.is_on is False
+    assert lamp.available
+    power.is_on = True
+    assert lamp.is_on is True
+    lamp.state.is_on = False  # Off scene chosen in the app
+    assert lamp.is_on is False
+    power.is_on = None  # power entity unavailable
+    assert lamp.is_on is False
+    assert not lamp.available
+
+
+async def test_power_off_blocks_bluetooth_only_actions() -> None:
+    """Brighter/dimmer without power fails fast instead of timing out."""
+    ble = _ble()
+    lamp, _power = _powered_lamp(ble, False)
+    with pytest.raises(HomeAssistantError) as err:
+        await lamp.brightness_step(1)
+    assert err.value.translation_key == "no_power"
+    ble.request.assert_not_awaited()
+
+
+async def test_power_restored_reads_state() -> None:
+    """After the wall switch powers the lamp, its state is read again."""
+    ble = _ble([b"\x00\x08", _state(3999, 49, True)])
+    lamp, _power = _powered_lamp(ble, True)
+    listener = MagicMock()
+    lamp.add_listener(listener)
+    await lamp.power_restored()
+    assert lamp.state.brightness == 49
+    listener.assert_called()
+
+
+async def test_power_restored_off_scene_selects_default() -> None:
+    """Turned on by HA but the lamp stays in Off: Default is selected."""
+    ble = _ble([b"\x00\x08", _state(2700, 0, False), b"\x00", _state(2700, 72, True)])
+    lamp, _power = _powered_lamp(ble, False)
+    await lamp.turn_on()
+    await lamp.power_restored()
+    assert ble.request.await_args_list[2].args[0] == protocol.select_scene(0xFF)
+    assert lamp.state.is_on is True
+    assert lamp.state.brightness == 72
+
+
+async def test_power_restored_lamp_unreachable() -> None:
+    """No Bluetooth after power-up: nothing breaks, the state stays."""
+    ble = _ble(BleakError("not found"))
+    lamp, _power = _powered_lamp(ble, True)
+    lamp.ble_present = False
+    with patch("custom_components.luke_roberts.lamp.POWER_UP_TIMEOUT", 0.01):
+        await lamp.power_restored()
+    assert lamp.state.is_on is None
+
+
+async def test_power_restored_by_wall_switch_keeps_off_scene() -> None:
+    """Powered by someone else: the lamp's own choice is shown, not changed."""
+    ble = _ble([b"\x00\x08", _state(2700, 0, False)])
+    lamp, _power = _powered_lamp(ble, True)
+    await lamp.power_restored()
+    assert ble.request.await_count == 2  # ping and state query, no scene
+    assert lamp.is_on is False
+
+
+async def test_wait_until_reachable_retries_ping() -> None:
+    """The lamp is still booting at first; the next ping gets through."""
+    ble = _ble([BleakError("booting"), b"\x00\x08"])
+    lamp, _power = _powered_lamp(ble, True)
+    await lamp.wait_until_reachable(timeout=5)
+    assert ble.request.await_count == 2
+
+
+async def test_wait_until_reachable_without_bluetooth() -> None:
+    """Cloud-only lamps have nothing to wait for."""
+    lamp = _lamp(MODE_CLOUD_FIRST, None, MagicMock())
+    await lamp.wait_until_reachable(timeout=0.01)

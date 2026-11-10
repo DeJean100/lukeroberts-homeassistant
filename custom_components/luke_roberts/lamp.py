@@ -9,10 +9,12 @@ reports (undocumented command ``09``), and it can be refreshed from the cloud.
 
 from __future__ import annotations
 
+import asyncio
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
 import logging
-from typing import Any
+import time
+from typing import Any, Protocol
 
 from homeassistant.exceptions import HomeAssistantError
 
@@ -21,9 +23,11 @@ from .ble import BLE_ERRORS, LukeRobertsBle
 from .cloud import CloudAuthError, CloudError, CloudState, LukeRobertsCloud
 from .const import (
     CLOUD_MAX_SCENE_ID,
+    DOMAIN,
     MODE_CLOUD_FIRST,
     MODE_CLOUD_ONLY,
     MODE_LOCAL_ONLY,
+    POWER_UP_TIMEOUT,
     RELATIVE_BRIGHTNESS_STEP,
     SCENE_DEFAULT,
     SCENE_OFF,
@@ -33,6 +37,20 @@ _LOGGER = logging.getLogger(__name__)
 
 ROUTE_BLUETOOTH = "bluetooth"
 ROUTE_CLOUD = "cloud"
+
+
+class PowerSwitch(Protocol):
+    """Something that switches the lamp's mains power (KNX, relay, plug)."""
+
+    @property
+    def is_on(self) -> bool | None:
+        """True while powered, False while cut, None if unknown."""
+
+    async def turn_on(self) -> None:
+        """Switch the power on."""
+
+    async def turn_off(self) -> None:
+        """Switch the power off."""
 
 
 @dataclass
@@ -74,6 +92,11 @@ class LukeRobertsLamp:
         # Whether the lamp answers the state query (``09``) as expected:
         # None = not asked yet, False = it does not, so it is not asked again.
         self.state_readable: bool | None = None
+        # Optional power switch in front of the lamp, used for on/off.
+        self.power: PowerSwitch | None = None
+        # When this integration switched the power on to turn the light on
+        # (monotonic time), so power_restored knows "on" was asked for.
+        self._power_on_requested: float | None = None
         self._listeners: list[Callable[[], None]] = []
         # Counts scene reports from the lamp, to tell whether one arrived while
         # a command ran (the lamp notifies before it answers the command).
@@ -109,8 +132,39 @@ class LukeRobertsLamp:
 
     @property
     def available(self) -> bool:
-        """At least one route can be tried."""
+        """At least one route can be tried.
+
+        With a power switch the lamp is also available while its power is
+        cut and it does not advertise, so it can be switched on.
+        """
+        if self.power is not None and self.has_local and self.power.is_on is not None:
+            return True
         return (self.has_local and self.ble_present) or self.has_cloud
+
+    @property
+    def powered(self) -> bool:
+        """False only when a power switch is known to be off."""
+        return self.power is None or self.power.is_on is not False
+
+    @property
+    def is_on(self) -> bool | None:
+        """On/off as shown: the power switch first, then the lamp itself."""
+        if self.power is not None:
+            power = self.power.is_on
+            if power is False:
+                return False
+            if power is True:
+                # Powered: on unless the lamp itself is in its Off scene.
+                return self.state.is_on is not False
+        return self.state.is_on
+
+    def _require_power(self) -> None:
+        if not self.powered:
+            raise HomeAssistantError(
+                translation_domain=DOMAIN,
+                translation_key="no_power",
+                translation_placeholders={"name": self.name},
+            )
 
     def scene_options(self) -> dict[str, int]:
         """Map display names to scene ids for selects and light effects."""
@@ -209,6 +263,16 @@ class LukeRobertsLamp:
         scene_id: int | None = None,
     ) -> None:
         """Switch on, optionally selecting a scene and adjusting it."""
+        if self.power is not None and self.power.is_on is not True:
+            self._power_on_requested = time.monotonic()
+            await self.power.turn_on()
+            if scene_id is None and brightness is None and kelvin is None:
+                # The lamp starts its power-up scene by itself; the state is
+                # read once it is back (power_restored).
+                self.notify()
+                return
+            await self.wait_until_reachable()
+            await self.read_state()
         select: int | None = scene_id
         if select is None and not self.state.is_on:
             select = SCENE_DEFAULT
@@ -256,7 +320,11 @@ class LukeRobertsLamp:
         self.notify()
 
     async def turn_off(self) -> None:
-        """Select the Off scene."""
+        """Cut the power if a power switch is set, else select the Off scene."""
+        if self.power is not None:
+            await self.power.turn_off()
+            self.notify()
+            return
 
         async def local(ble: LukeRobertsBle) -> None:
             protocol.check_status(await ble.request(protocol.select_scene(SCENE_OFF)))
@@ -279,6 +347,7 @@ class LukeRobertsLamp:
 
     async def next_scene(self, direction: int) -> None:
         """Step to the next brighter (+1) or dimmer (-1) scene. BLE only."""
+        self._require_power()
 
         async def local(ble: LukeRobertsBle) -> None:
             protocol.check_status(
@@ -296,6 +365,7 @@ class LukeRobertsLamp:
 
     async def relative_brightness(self, delta: int) -> None:
         """Change the current brightness by delta percentage points. BLE only."""
+        self._require_power()
 
         async def local(ble: LukeRobertsBle) -> None:
             protocol.check_status(
@@ -320,6 +390,7 @@ class LukeRobertsLamp:
         duration_ms: int,
     ) -> None:
         """Send a transient Immediate Light command. BLE only."""
+        self._require_power()
         frame = protocol.immediate_light(uplight, downlight, duration_ms)
 
         async def local(ble: LukeRobertsBle) -> None:
@@ -330,6 +401,62 @@ class LukeRobertsLamp:
             self.state.is_on = True
             if downlight is not None:
                 self.state.kelvin = downlight.kelvin
+        self.notify()
+
+    async def wait_until_reachable(self, timeout: float | None = None) -> None:
+        """Wait after power-up until the lamp answers over Bluetooth."""
+        if not self.has_local:
+            return
+        if timeout is None:
+            timeout = POWER_UP_TIMEOUT
+        deadline = time.monotonic() + timeout
+        last: Exception | None = None
+        while time.monotonic() < deadline:
+            if self.ble is not None and self.ble_present:
+                try:
+                    await self.ping()
+                except (*BLE_ERRORS, protocol.LampError, HomeAssistantError) as err:
+                    last = err
+                else:
+                    return
+            await asyncio.sleep(1)
+        raise HomeAssistantError(
+            translation_domain=DOMAIN,
+            translation_key="no_answer_after_power_on",
+            translation_placeholders={
+                "name": self.name,
+                "seconds": f"{timeout:.0f}",
+                "error": str(last),
+            },
+        )
+
+    async def power_restored(self) -> None:
+        """Catch up with the lamp after its power went from off to on.
+
+        Which scene the lamp starts with depends on its settings in the Luke
+        Roberts app (power-on scene, click detection on the wall switch), so
+        it is read, not assumed. Only when this integration switched the
+        power on to turn the light on and the lamp still reports its Off
+        scene (e.g. after a cut of under a second), Default is selected.
+        """
+        requested = self._power_on_requested
+        self._power_on_requested = None
+        asked_for_on = (
+            requested is not None and time.monotonic() - requested < POWER_UP_TIMEOUT
+        )
+        try:
+            await self.wait_until_reachable()
+            if await self.read_state() and self.state.is_on is False and asked_for_on:
+                _LOGGER.debug(
+                    "%s: Off scene after power-up, selecting Default", self.name
+                )
+                assert self.ble is not None
+                protocol.check_status(
+                    await self.ble.request(protocol.select_scene(SCENE_DEFAULT))
+                )
+                await self.read_state()
+        except (HomeAssistantError, protocol.LampError, *BLE_ERRORS) as err:
+            _LOGGER.debug("%s: after power-up: %s", self.name, err)
         self.notify()
 
     async def _read_state_after_command(self) -> None:

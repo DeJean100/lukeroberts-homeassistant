@@ -21,6 +21,8 @@ from homeassistant.core import callback
 from homeassistant.helpers.aiohttp_client import async_get_clientsession
 from homeassistant.helpers.device_registry import format_mac
 from homeassistant.helpers.selector import (
+    EntitySelector,
+    EntitySelectorConfig,
     NumberSelector,
     NumberSelectorConfig,
     NumberSelectorMode,
@@ -49,6 +51,7 @@ from .const import (
     CONF_CONNECTION_MODE,
     CONF_FIRMWARE_KEY,
     CONF_LINGER,
+    CONF_POWER_ENTITY,
     DEFAULT_LINGER,
     DOMAIN,
     MODE_CLOUD_FIRST,
@@ -368,6 +371,8 @@ class LukeRobertsOptionsFlow(OptionsFlow):
                     self._options[CONF_API_KEY] = api_key
                 if firmware_key := (user_input.get(CONF_FIRMWARE_KEY) or "").strip():
                     self._options[CONF_FIRMWARE_KEY] = firmware_key
+                if power_entity := user_input.get(CONF_POWER_ENTITY):
+                    self._options[CONF_POWER_ENTITY] = power_entity
                 if lookup_key:
                     return await self.async_step_cloud_lamp()
                 return self.async_create_entry(data=self._options)
@@ -417,6 +422,12 @@ class LukeRobertsOptionsFlow(OptionsFlow):
                     description={"suggested_value": self._current(CONF_FIRMWARE_KEY)},
                 )
             ] = API_KEY_SELECTOR
+            schema[
+                vol.Optional(
+                    CONF_POWER_ENTITY,
+                    description={"suggested_value": self._current(CONF_POWER_ENTITY)},
+                )
+            ] = EntitySelector(EntitySelectorConfig(domain=["light", "switch"]))
         return self.async_show_form(
             step_id="init",
             data_schema=vol.Schema(schema),
