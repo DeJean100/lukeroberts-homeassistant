@@ -127,12 +127,25 @@ class SceneOptionsMixin(OptionsFlow):
         if user_input is not None:
             self._scene_id = int(user_input[SCENE])
             return await self.async_step_scene_action()
+        static = sorted(
+            (
+                (scene_id, record)
+                for scene_id, record in lamp.scene_records.items()
+                if record.scene_type == protocol.SceneType.STATIC
+            ),
+            key=lambda item: item[1].sort_index,
+        )
+        names = [record.name for _scene_id, record in static]
         options = [
-            SelectOptionDict(value=str(scene_id), label=record.name or str(scene_id))
-            for scene_id, record in sorted(
-                lamp.scene_records.items(), key=lambda item: item[1].sort_index
+            SelectOptionDict(
+                value=str(scene_id),
+                label=(
+                    f"{record.name} ({scene_id})"
+                    if not record.name or names.count(record.name) > 1
+                    else record.name
+                ),
             )
-            if record.scene_type == protocol.SceneType.STATIC
+            for scene_id, record in static
         ]
         if not options:
             return self.async_abort(reason="no_static_scenes")
