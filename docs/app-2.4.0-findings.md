@@ -143,6 +143,19 @@ notifications, and finally an indication on `…42`:
 (Seen: `01 00 02` with no scene records and scene 2 selected, `01 01 04`
 with one record, `01 14 04` with all 20.)
 
+Measured through an ESPHome Bluetooth proxy (2026-11-18):
+
+* Only the changed records come with the lamp's **real database id**. With
+  database id `00000000`, or a revision above the current one, the lamp
+  sends every slot.
+* A Sync at the current revision sends no scene records; the answer comes
+  after about 0.2 s, so it is a cheap "anything changed?" check.
+* Without the settings notifications (`…41`) subscribed, a Sync with no
+  records to send is answered with status `0x82`.
+* Through the proxy the records arrive in 2-byte notifications (12 bytes on
+  a Windows PC); the proxy drops some of them in bursts (3-25 %) and
+  sometimes the final answer. Order is kept.
+
 With revision `00000000` the lamp sends every slot: 20 slots (ids 0–19) on
 the test lamp, 1810 bytes in total, empty slots as 8-byte wireType 0
 records. The record size follows from the wireType byte, so the stream can

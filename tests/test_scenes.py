@@ -225,6 +225,7 @@ async def test_rename_refuses_other_scene_types(hass: HomeAssistant) -> None:
         with pytest.raises(ServiceValidationError):
             await lamp.rename_scene(1, "x" * 21)
         assert client.record_writes == []
+        assert await lamp.scene_backups.backups() == []
         await lamp.ble.disconnect()
 
 

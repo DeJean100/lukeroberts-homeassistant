@@ -741,8 +741,9 @@ class LukeRobertsLamp:
             await self._rename_scene(scene_id, name)
 
     async def _rename_scene(self, scene_id: int, name: str) -> None:
-        backup = await self._backup_scenes(f"before renaming scene {scene_id}")
-        record = backup.records.get(scene_id)
+        assert self.scene_backups is not None  # checked by read_scene_records
+        revision, records = await self.read_scene_records()
+        record = records.get(scene_id)
         if record is None or record.is_empty:
             raise ServiceValidationError(f"{self.name}: there is no scene {scene_id}")
         try:
@@ -754,6 +755,9 @@ class LukeRobertsLamp:
             ) from err
         if renamed == record:
             return
+        await self.scene_backups.add(
+            records, revision, f"before renaming scene {scene_id}"
+        )
         await self._write_scene(renamed)
 
     async def restore_scene(self, scene_id: int) -> SceneBackup:

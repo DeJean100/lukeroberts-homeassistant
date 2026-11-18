@@ -10,6 +10,13 @@
   reading the scene back. Off and dynamic scenes are never written. Verified
   on a Model F (firmware 1.2.2): a rename changes only the name, leaves the
   other scenes and the active scene alone, and a restore is byte for byte.
+- Scenes are read like the app does: a copy is kept in Home Assistant and
+  only the scenes changed since then are asked for (about 0.2 s when nothing
+  changed). This makes it work through Bluetooth proxies that lose
+  notifications: the first full read collects intact scenes over several
+  attempts and rebuilds damaged ones from two copies when that is
+  unambiguous, and a damaged read is never taken over. Through an ESPHome
+  proxy: first read about 25 s, rename or restore under 3 s.
 
 ## Unreleased
 
