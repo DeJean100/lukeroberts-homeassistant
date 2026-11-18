@@ -1,7 +1,8 @@
 """Frame builders and parsers for the Luke Roberts Lamp Control API v1.3.
 
 Pure Python, no Home Assistant or Bluetooth imports, so it can be unit tested
-on its own. All multi-byte numbers are big endian. Every command starts with
+on its own. All multi-byte numbers of the API are big endian (the state query
+and the scene records at the end are little endian). Every command starts with
 the prefix ``A0`` followed by the API version byte (``01`` or ``02``).
 """
 
@@ -267,3 +268,328 @@ def parse_state(response: bytes) -> LightState | None:
     if flag not in (0x00, 0x01) or level > 100:
         return None
     return LightState(is_on=flag == 0x01, brightness=level, kelvin=kelvin)
+
+
+# --- Scene records ------------------------------------------------------------
+#
+# Not part of the Lamp Control API v1.3. Verified on a Model F (firmware 1.2.2)
+# with a Bluetooth capture of the Luke Roberts app, see
+# docs/app-2.4.0-findings.md. Unlike the API, numbers are little endian.
+
+SYNC = 0x07
+SCENE_RECORD_VERSION = 0x01
+SCENE_NEW = 0xFE  # written as id of a new scene, the lamp assigns the real one
+SCENE_NAME_LENGTH = 20
+SCENE_HEADER_LENGTH = 8
+
+
+class SceneType(IntEnum):
+    """Record type byte (``wireType``) of a scene record."""
+
+    EMPTY = 0x00  # empty slot when read, delete when written
+    STATIC = 0x01  # kelvin, 16 uplight segments, 84 downlight spots, name
+    DYNAMIC = 0x02  # animation built into the firmware (e.g. "Demo")
+    NAME_ONLY = 0x03  # the Off scene
+
+
+SCENE_RECORD_LENGTH = {
+    SceneType.EMPTY: SCENE_HEADER_LENGTH,
+    SceneType.STATIC: 178,
+    SceneType.DYNAMIC: 108,
+    SceneType.NAME_ONLY: 28,
+}
+
+
+class SceneRecordError(ValueError):
+    """Scene records that cannot be parsed or changed."""
+
+
+@dataclass(frozen=True, slots=True)
+class SceneRecord:
+    """One scene slot as stored in the lamp, kept byte for byte."""
+
+    raw: bytes
+
+    @property
+    def scene_id(self) -> int:
+        """Id of the scene (0 = Off)."""
+        return self.raw[1]
+
+    @property
+    def sort_index(self) -> int:
+        """Position in the app's scene list."""
+        return self.raw[2]
+
+    @property
+    def scene_type(self) -> int:
+        """Record type, see ``SceneType``."""
+        return self.raw[3]
+
+    @property
+    def is_empty(self) -> bool:
+        """True for a free (or deleted) slot."""
+        return self.scene_type == SceneType.EMPTY
+
+    @property
+    def name(self) -> str:
+        """Scene name, empty for a free slot."""
+        if self.is_empty:
+            return ""
+        raw = self.raw[-SCENE_NAME_LENGTH:].split(b"\x00", 1)[0]
+        return raw.decode("utf-8", errors="replace")
+
+    def with_name(self, name: str) -> SceneRecord:
+        """The same record with another name; only static scenes."""
+        if self.scene_type != SceneType.STATIC:
+            raise SceneRecordError("only static scenes can be renamed")
+        return SceneRecord(self.raw[:-SCENE_NAME_LENGTH] + encode_scene_name(name))
+
+
+def encode_scene_name(name: str) -> bytes:
+    """Name field: UTF-8, at most 20 bytes, padded with zero bytes."""
+    name = name.strip()
+    if not name:
+        raise SceneRecordError("the name is empty")
+    raw = name.encode("utf-8")
+    if len(raw) > SCENE_NAME_LENGTH:
+        raise SceneRecordError(
+            f"the name is {len(raw)} bytes long, the lamp stores at most "
+            f"{SCENE_NAME_LENGTH}"
+        )
+    return raw.ljust(SCENE_NAME_LENGTH, b"\x00")
+
+
+def sync(revision: int = 0, database: bytes = bytes(4)) -> bytes:
+    """Sync: settings and every scene record changed after ``revision``.
+
+    With revision 0 the lamp sends all scene slots. It also accepts an
+    all-zero database id, so nothing has to be remembered between syncs.
+    """
+    return (
+        bytes([SYNC])
+        + struct.pack("<I", revision & 0xFFFFFFFF)
+        + database[:4].ljust(4, b"\x00")
+        + bytes([0x00, 0x01])
+    )
+
+
+@dataclass(frozen=True, slots=True)
+class SyncDone:
+    """Final answer to a Sync."""
+
+    revision: int
+    records: int  # number of scene records the lamp sent
+    selected: int  # active scene id
+    database: bytes
+
+
+def parse_sync_done(response: bytes) -> SyncDone:
+    """Parse ``00 RRRRRRRR 01 NN SS 9C 00 DDDDDDDD 00 00``."""
+    check_status(response)
+    if len(response) < 15:
+        raise LampError(Status.INVALID_PARAMETERS)
+    return SyncDone(
+        revision=struct.unpack_from("<I", response, 1)[0],
+        records=response[6],
+        selected=response[7],
+        database=bytes(response[10:14]),
+    )
+
+
+def parse_scene_records(stream: bytes) -> list[SceneRecord]:
+    """Split the concatenated scene notifications of a Sync into records."""
+    records: list[SceneRecord] = []
+    offset = 0
+    while offset < len(stream):
+        header = stream[offset : offset + SCENE_HEADER_LENGTH]
+        if len(header) < SCENE_HEADER_LENGTH or header[0] != SCENE_RECORD_VERSION:
+            raise SceneRecordError(f"no scene record at byte {offset}")
+        length = SCENE_RECORD_LENGTH.get(header[3])  # type: ignore[call-overload]
+        if length is None:
+            raise SceneRecordError(f"unknown scene record type 0x{header[3]:02X}")
+        raw = stream[offset : offset + length]
+        if len(raw) < length:
+            raise SceneRecordError("scene record cut off")
+        records.append(SceneRecord(bytes(raw)))
+        offset += length
+    return records
+
+
+@dataclass(frozen=True, slots=True)
+class SceneWrite:
+    """Answer of the lamp to a scene record write."""
+
+    revision: int
+    scene_id: int
+    sort_index: int
+
+
+def parse_scene_write(response: bytes) -> SceneWrite:
+    """Parse ``00 RRRRRRRR <scene id> <sort index>``."""
+    check_status(response)
+    if len(response) < 7:
+        raise LampError(Status.INVALID_PARAMETERS)
+    return SceneWrite(
+        revision=struct.unpack_from("<I", response, 1)[0],
+        scene_id=response[5],
+        sort_index=response[6],
+    )
+
+
+def _plausible(record: bytes) -> bool:
+    """Extra checks on a record found in a damaged stream."""
+    scene_type = record[3]
+    if record[4:8] != bytes(4):
+        return False
+    if scene_type == SceneType.EMPTY:
+        return True
+    name = record[-SCENE_NAME_LENGTH:]
+    end = name.find(b"\x00")
+    if end >= 0 and any(name[end:]):
+        return False  # garbage after the name
+    try:
+        name[: end if end >= 0 else None].decode("utf-8")
+    except UnicodeDecodeError:
+        return False
+    if scene_type in (SceneType.STATIC, SceneType.DYNAMIC):
+        kelvin = struct.unpack_from("<H", record, SCENE_HEADER_LENGTH)[0]
+        return 1000 <= kelvin <= 10000
+    return True
+
+
+def _header_at(stream: bytes, offset: int, scene_id: int) -> bool:
+    header = stream[offset : offset + SCENE_HEADER_LENGTH]
+    return (
+        len(header) == SCENE_HEADER_LENGTH
+        and header[0] == SCENE_RECORD_VERSION
+        and header[1] == scene_id
+        and header[3] in SCENE_RECORD_LENGTH
+        and header[4:8] == bytes(4)
+    )
+
+
+def recover_scene_records(stream: bytes, slots: int) -> dict[int, SceneRecord]:
+    """Intact records from a full Sync (all slots) that may have gaps.
+
+    A full Sync sends the slots 0..slots-1 in order. A Bluetooth proxy may
+    drop notifications, which shortens the stream but keeps the order. A
+    record is taken only if it starts with the header of its id and the
+    header of the next id starts exactly where the record ends (or the
+    stream ends there, for the last slot), so a record with a gap inside is
+    never accepted.
+    """
+    found: dict[int, SceneRecord] = {}
+    for offset in range(len(stream) - SCENE_HEADER_LENGTH + 1):
+        scene_id = stream[offset + 1]
+        if scene_id >= slots or scene_id in found:
+            continue
+        if not _header_at(stream, offset, scene_id):
+            continue
+        end = offset + SCENE_RECORD_LENGTH[stream[offset + 3]]  # type: ignore[index]
+        if scene_id == slots - 1:
+            complete = end == len(stream)
+        else:
+            complete = _header_at(stream, end, scene_id + 1)
+        record = stream[offset:end]
+        if complete and _plausible(record):
+            found[scene_id] = SceneRecord(bytes(record))
+    return found
+
+
+def scene_segments(stream: bytes, slots: int) -> dict[int, bytes]:
+    """Each record of a full Sync as received, possibly with gaps inside.
+
+    A segment runs from the header of an id to the header of the next id
+    (or to the end of the stream for the last slot). Notifications are
+    dropped whole and records have an even length, so a segment is the
+    record with some 2-byte chunks missing, in order.
+    """
+    segments: dict[int, bytes] = {}
+    starts: dict[int, int] = {}
+    for offset in range(0, len(stream) - SCENE_HEADER_LENGTH + 1, 2):
+        scene_id = stream[offset + 1]
+        if (
+            scene_id < slots
+            and scene_id not in starts
+            and _header_at(stream, offset, scene_id)
+        ):
+            starts[scene_id] = offset
+    for scene_id, start in starts.items():
+        if scene_id == slots - 1:
+            end = len(stream)
+        elif (end := starts.get(scene_id + 1, -1)) <= start:
+            continue
+        segments[scene_id] = stream[start:end]
+    return segments
+
+
+def _unique_supersequence(
+    first: list[bytes], second: list[bytes]
+) -> list[bytes] | None:
+    """The shortest common supersequence if it is unique, else None."""
+    n, m = len(first), len(second)
+    # length[i][j]: length of the shortest common supersequence of the tails
+    length = [[0] * (m + 1) for _ in range(n + 1)]
+    for i in range(n, -1, -1):
+        for j in range(m, -1, -1):
+            if i == n or j == m:
+                length[i][j] = (n - i) + (m - j)
+            elif first[i] == second[j]:
+                length[i][j] = 1 + length[i + 1][j + 1]
+            else:
+                length[i][j] = 1 + min(length[i + 1][j], length[i][j + 1])
+    # results[i][j]: up to two distinct shortest supersequences of the tails
+    results: list[list[list[tuple[bytes, ...]]]] = [
+        [[] for _ in range(m + 1)] for _ in range(n + 1)
+    ]
+    for i in range(n, -1, -1):
+        for j in range(m, -1, -1):
+            if i == n or j == m:
+                results[i][j] = [tuple(first[i:]) + tuple(second[j:])]
+                continue
+            options: list[tuple[bytes, ...]] = []
+            if first[i] == second[j]:
+                options = [(first[i], *tail) for tail in results[i + 1][j + 1]]
+            else:
+                if length[i + 1][j] <= length[i][j + 1]:
+                    options += [(first[i], *tail) for tail in results[i + 1][j]]
+                if length[i][j + 1] <= length[i + 1][j]:
+                    options += [(second[j], *tail) for tail in results[i][j + 1]]
+            unique = list(dict.fromkeys(options))
+            results[i][j] = unique[:2]
+    found = results[0][0]
+    return list(found[0]) if len(found) == 1 else None
+
+
+def merge_damaged_records(scene_id: int, copies: list[bytes]) -> SceneRecord | None:
+    """Rebuild a record from damaged copies (records with chunks missing).
+
+    Two copies are combined only if their shortest common supersequence has
+    exactly the record's length and is unique: the real record is then a
+    common supersequence of that minimal length, so it must be this one.
+    """
+    if not copies:
+        return None
+    scene_type = copies[0][3] if len(copies[0]) > 3 else None
+    length = SCENE_RECORD_LENGTH.get(scene_type)  # type: ignore[call-overload]
+    if length is None:
+        return None
+    chunked = [
+        [copy[i : i + 2] for i in range(0, len(copy), 2)]
+        for copy in copies
+        if len(copy) % 2 == 0 and len(copy) < length
+    ]
+    for a in range(len(chunked)):
+        for b in range(a + 1, len(chunked)):
+            merged = _unique_supersequence(chunked[a], chunked[b])
+            if merged is None:
+                continue
+            raw = b"".join(merged)
+            if (
+                len(raw) == length
+                and _header_at(raw, 0, scene_id)
+                and raw[3] == scene_type
+                and _plausible(raw)
+            ):
+                return SceneRecord(raw)
+    return None

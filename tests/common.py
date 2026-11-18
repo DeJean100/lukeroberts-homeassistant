@@ -11,9 +11,39 @@ from bleak.backends.scanner import AdvertisementData
 from bleak.exc import BleakError
 from homeassistant.components.bluetooth import BluetoothServiceInfoBleak
 
-from custom_components.luke_roberts.const import SCENE_CHAR_UUID, SERVICE_UUID
+from custom_components.luke_roberts.const import (
+    API_CHAR_UUID,
+    SCENE_CHAR_UUID,
+    SCENE_RECORD_CHAR_UUID,
+    SERVICE_UUID,
+    SETTINGS_CHAR_UUID,
+)
 
 ADDRESS = "AA:BB:CC:DD:EE:FF"
+
+
+def static_record(
+    scene_id: int, name: str, sort_index: int = 0, fill: int = 0x40
+) -> bytes:
+    """A 178-byte static scene record as the lamp stores it."""
+    header = bytes([0x01, scene_id, sort_index, 0x01, 0, 0, 0, 0])
+    body = (2700).to_bytes(2, "little") + bytes([0xA2, 0x70, 0x1F, fill]) * 16
+    body += bytes([fill]) * 84
+    return header + body + name.encode().ljust(20, b"\x00")
+
+
+def default_records() -> dict[int, bytes]:
+    """Scene slots of the fake lamp: Off, two static scenes, Demo, one free."""
+    return {
+        0: bytes([0x01, 0x00, 0x00, 0x03, 0, 0, 0, 0]) + b"Off".ljust(20, b"\x00"),
+        1: static_record(1, "Lesen", 10),
+        2: static_record(2, "Gemütlich", 20),
+        3: bytes([0x01, 0x03, 0xFF, 0x02, 0, 0, 0, 0])
+        + (2700).to_bytes(2, "little")
+        + bytes(78)
+        + b"Demo".ljust(20, b"\x00"),
+        4: bytes([0x01, 0x04, 0x00, 0x00, 0, 0, 0, 0]),
+    }
 
 
 def service_info(
@@ -67,6 +97,23 @@ class FakeLampClient:
         self.active_scene: int | None = 1
         self._callback: Callable[[object, bytearray], None] | None = None
         self.scene_callback: Callable[[object, bytearray], None] | None = None
+        # Scene records (Sync / scene writes) and the lamp's revision.
+        self.records: dict[int, bytes] = default_records()
+        self.revision = 0x025E00
+        self.record_writes: list[bytes] = []
+        # Rewrite what a scene write stores, to test the read-back check.
+        self.mangle_record: Callable[[bytes], bytes] | None = None
+        # Announce more records than are sent, to test the count check.
+        self.sync_count_offset = 0
+        self.database = bytes.fromhex("d2b221d0")
+        self.record_revision: dict[int, int] = dict.fromkeys(self.records, 1)
+        self.chunk = 12
+        # Bluetooth proxy losses: drop chunk n of a Sync / the next answers.
+        self.drop_chunk: Callable[[int], bool] | None = None
+        self.drop_done = 0
+        # (revision asked, records sent) per answered Sync.
+        self.syncs: list[tuple[int, int]] = []
+        self.notify_callbacks: dict[str, Callable[[object, bytearray], None]] = {}
 
     async def start_notify(self, uuid: str, callback) -> None:
         if uuid == SCENE_CHAR_UUID:
@@ -74,7 +121,86 @@ class FakeLampClient:
                 raise BleakError("Characteristic not found")
             self.scene_callback = callback
             return
+        if uuid in (SETTINGS_CHAR_UUID, SCENE_RECORD_CHAR_UUID):
+            self.notify_callbacks[uuid] = callback
+            return
         self._callback = callback
+
+    async def stop_notify(self, uuid: str) -> None:
+        self.notify_callbacks.pop(uuid, None)
+
+    def change_record(self, record: bytes) -> None:
+        """Simulate a change made in the app."""
+        self.revision += 1
+        self.records[record[1]] = record
+        self.record_revision[record[1]] = self.revision
+
+    def _sync(self, frame: bytes) -> None:
+        """Answer a Sync like the lamp: settings, records in chunks, done.
+
+        With the lamp's database id only the records changed after the given
+        revision are sent, otherwise all of them. ``drop_chunk`` and
+        ``drop_done`` simulate a Bluetooth proxy that loses notifications.
+        """
+        loop = asyncio.get_running_loop()
+        revision = int.from_bytes(frame[1:5], "little")
+        database = frame[5:9]
+        if database == self.database and revision <= self.revision:
+            ids = [
+                i for i in sorted(self.records) if self.record_revision[i] > revision
+            ]
+        else:
+            ids = sorted(self.records)
+        settings = self.notify_callbacks.get(SETTINGS_CHAR_UUID)
+        assert self._callback is not None
+        if not ids and settings is None:
+            loop.call_soon(self._callback, None, bytearray(b"\x82"))
+            return
+        self.syncs.append((revision, len(ids)))
+        if settings is not None:
+            loop.call_soon(settings, None, bytearray(b"\x02\x01\x01\x01\x01Lamp"))
+        stream = b"".join(self.records[i] for i in ids)
+        records = self.notify_callbacks.get(SCENE_RECORD_CHAR_UUID)
+        if records is not None:
+            for n, i in enumerate(range(0, len(stream), self.chunk)):
+                if self.drop_chunk is not None and self.drop_chunk(n):
+                    continue
+                loop.call_soon(records, None, bytearray(stream[i : i + self.chunk]))
+        if self.drop_done > 0:
+            self.drop_done -= 1
+            return
+        done = (
+            b"\x00"
+            + self.revision.to_bytes(4, "little")
+            + bytes(
+                [
+                    0x01,
+                    len(ids) + self.sync_count_offset,
+                    self.active_scene or 0,
+                    0x9C,
+                    0x00,
+                ]
+            )
+            + self.database
+            + b"\x00\x00"
+        )
+        loop.call_soon(self._callback, None, bytearray(done))
+
+    def _write_record(self, record: bytes) -> bytes:
+        self.record_writes.append(record)
+        self.revision += 1
+        scene_id = record[1]
+        if self.mangle_record is not None:
+            record = self.mangle_record(record)
+        if record[3] == 0x00:
+            self.records[scene_id] = record[:8]
+            self.record_revision[scene_id] = self.revision
+            self.scenes.pop(scene_id, None)
+        else:
+            self.records[scene_id] = record
+            self.record_revision[scene_id] = self.revision
+            self.scenes[scene_id] = record[-20:].split(b"\x00", 1)[0].decode()
+        return b"\x00" + self.revision.to_bytes(4, "little") + record[1:3]
 
     def push_scene(self, scene_id: int) -> None:
         """Simulate the lamp switching scene, e.g. from the app."""
@@ -83,8 +209,15 @@ class FakeLampClient:
         self.scene_callback(None, bytearray([scene_id]))
 
     async def write_gatt_char(self, uuid: str, data: bytes, response: bool) -> None:
-        self.written.append(bytes(data))
-        reply = self.respond(bytes(data))
+        if uuid == SCENE_RECORD_CHAR_UUID:
+            reply = self._write_record(bytes(data))
+        else:
+            assert uuid == API_CHAR_UUID
+            self.written.append(bytes(data))
+            if data[0] == 0x07:
+                self._sync(bytes(data))
+                return
+            reply = self.respond(bytes(data))
         assert self._callback is not None
         asyncio.get_running_loop().call_soon(self._callback, None, bytearray(reply))
 

@@ -6,6 +6,24 @@ Fork release with PR #16, PR #17 and the power switch option, which are
 not merged upstream yet. Same domain as the original, so it replaces it.
 
 
+- **Scene backup, rename and restore.** New actions
+  `luke_roberts.backup_scenes`, `rename_scene` and `restore_scene` read and
+  write the lamp's scene records like the Luke Roberts app (Sync command and
+  scene record characteristic `…43`, little endian). Every write is preceded
+  by a backup of all scenes in Home Assistant's storage and checked by
+  reading the scene back. Off and dynamic scenes are never written. Verified
+  on a Model F (firmware 1.2.2): a rename changes only the name, leaves the
+  other scenes and the active scene alone, and a restore is byte for byte.
+- Scenes are read like the app does: a copy is kept in Home Assistant and
+  only the scenes changed since then are asked for (about 0.2 s when nothing
+  changed). This makes it work through Bluetooth proxies that lose
+  notifications: the first full read collects intact scenes over several
+  attempts and rebuilds damaged ones from two copies when that is
+  unambiguous, and a damaged read is never taken over. Through an ESPHome
+  proxy: first read about 25 s, rename or restore under 3 s.
+
+## Unreleased
+
 - **Power switch option.** A lamp on a switched circuit (KNX or Shelly
   actuator, smart plug, relay) can name that light or switch entity as
   *Power switch* in its options. On/off then switches the power, the light's

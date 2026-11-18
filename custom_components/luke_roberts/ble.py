@@ -36,6 +36,10 @@ from .const import (
     KEEPALIVE_INTERVAL,
     RESPONSE_TIMEOUT,
     SCENE_CHAR_UUID,
+    SCENE_RECORD_CHAR_UUID,
+    SETTINGS_CHAR_UUID,
+    SYNC_IDLE_TIMEOUT,
+    SYNC_TIMEOUT,
 )
 
 _LOGGER = logging.getLogger(__name__)
@@ -196,17 +200,99 @@ class LukeRobertsBle:
         self._schedule_keepalive()
         return responses
 
-    async def _request_locked(self, frame: bytes) -> bytes:
+    async def _request_locked(
+        self,
+        frame: bytes,
+        char_uuid: str = API_CHAR_UUID,
+        timeout: float = RESPONSE_TIMEOUT,
+    ) -> bytes:
         client = await self._ensure_connected()
         loop = asyncio.get_running_loop()
         self._response = loop.create_future()
-        _LOGGER.debug("%s: -> %s", self._name, frame.hex(" "))
+        _LOGGER.debug("%s: -> %s %s", self._name, char_uuid[4:8], frame.hex(" "))
         try:
-            await client.write_gatt_char(API_CHAR_UUID, frame, response=True)
-            async with asyncio.timeout(RESPONSE_TIMEOUT):
+            await client.write_gatt_char(char_uuid, frame, response=True)
+            async with asyncio.timeout(timeout):
                 return await self._response
         finally:
             self._response = None
+
+    async def sync_scenes(
+        self, revision: int, database: bytes, timeout: float = SYNC_TIMEOUT
+    ) -> tuple[protocol.SyncDone | None, bytes]:
+        """Send one Sync and return the final answer and the raw record stream.
+
+        The lamp sends the settings record on its own characteristic, then
+        the scene records changed after ``revision`` split into notifications
+        on the scene record characteristic, and finally the answer on the API
+        characteristic. The answer is None if it did not arrive in time. The
+        stream is returned as received: a Bluetooth proxy may drop
+        notifications, so the caller checks it.
+
+        The settings notifications are always subscribed: without them the
+        lamp answers a Sync with nothing to send with status 0x82.
+        """
+        stream = bytearray()
+        last_chunk = time.monotonic()
+
+        def on_record(_sender: object, data: bytearray) -> None:
+            nonlocal last_chunk
+            last_chunk = time.monotonic()
+            stream.extend(data)
+
+        def on_settings(_sender: object, data: bytearray) -> None:
+            pass  # the settings record is not used (yet)
+
+        done: protocol.SyncDone | None = None
+        async with self._lock:
+            client = await self._ensure_connected()
+            await client.start_notify(SETTINGS_CHAR_UUID, on_settings)
+            await client.start_notify(SCENE_RECORD_CHAR_UUID, on_record)
+            frame = protocol.sync(revision, database)
+            self._response = asyncio.get_running_loop().create_future()
+            _LOGGER.debug("%s: -> 2842 %s", self._name, frame.hex(" "))
+            try:
+                await client.write_gatt_char(API_CHAR_UUID, frame, response=True)
+                deadline = time.monotonic() + timeout
+                response: bytes | None = None
+                while response is None:
+                    try:
+                        async with asyncio.timeout(0.25):
+                            response = await asyncio.shield(self._response)
+                    except TimeoutError:
+                        now = time.monotonic()
+                        # A proxy may lose the final answer too: give up when
+                        # the records stopped coming, not only at the deadline.
+                        if now > deadline or (
+                            stream and now - last_chunk > SYNC_IDLE_TIMEOUT
+                        ):
+                            _LOGGER.debug("%s: no answer to Sync", self._name)
+                            break
+                if response is not None:
+                    done = protocol.parse_sync_done(response)
+            finally:
+                self._response = None
+                for uuid in (SCENE_RECORD_CHAR_UUID, SETTINGS_CHAR_UUID):
+                    with contextlib.suppress(Exception):
+                        await client.stop_notify(uuid)
+        self._last_command = time.monotonic()
+        self._schedule_keepalive()
+        _LOGGER.debug(
+            "%s: Sync from 0x%X: %d bytes, %s",
+            self._name,
+            revision,
+            len(stream),
+            done,
+        )
+        return done, bytes(stream)
+
+    async def write_scene_record(self, record: bytes) -> protocol.SceneWrite:
+        """Write one scene record; the lamp answers on the API characteristic."""
+        async with self._lock:
+            response = await self._request_locked(record, SCENE_RECORD_CHAR_UUID)
+        self._last_command = time.monotonic()
+        self._schedule_keepalive()
+        return protocol.parse_scene_write(response)
 
     async def read_device_info(self) -> dict[str, str]:
         """Read the Device Information Service, skipping missing fields."""

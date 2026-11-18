@@ -52,6 +52,7 @@ from .const import (
 )
 from .lamp import LukeRobertsLamp
 from .power import EntityPowerSwitch
+from .scene_backup import SceneBackupStore
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -135,6 +136,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: LukeRobertsConfigEntry) 
         cloud_lamp_id=int(cloud_lamp_id) if cloud_lamp_id is not None else None,
     )
     lamp.ble_present = ble_device is not None
+    lamp.scene_backups = SceneBackupStore(hass, entry.unique_id or entry.entry_id)
     entry.runtime_data = lamp
 
     if address and (power_entity := _option(entry, CONF_POWER_ENTITY)):
