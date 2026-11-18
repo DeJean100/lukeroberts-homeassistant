@@ -16,6 +16,12 @@ from .entity import LukeRobertsEntity
 from .lamp import LukeRobertsLamp
 
 
+async def _refresh_scenes(lamp: LukeRobertsLamp) -> None:
+    """Scene names, then the scene details if they were read before."""
+    await lamp.refresh_scenes()
+    await lamp.update_scene_records()
+
+
 @dataclass(frozen=True, kw_only=True)
 class LukeRobertsButtonDescription(ButtonEntityDescription):
     """Button description with its action."""
@@ -49,7 +55,7 @@ BUTTONS: tuple[LukeRobertsButtonDescription, ...] = (
         key="refresh_scenes",
         translation_key="refresh_scenes",
         entity_category=EntityCategory.DIAGNOSTIC,
-        press_fn=lambda lamp: lamp.refresh_scenes(),
+        press_fn=_refresh_scenes,
     ),
     LukeRobertsButtonDescription(
         key="ping",

@@ -137,6 +137,11 @@
       "firmware": {
         "name": "Firmware"
       }
+    },
+    "image": {
+      "scene_preview": {
+        "name": "Szenenvorschau"
+      }
     }
   },
   "services": {

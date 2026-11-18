@@ -58,6 +58,7 @@ _LOGGER = logging.getLogger(__name__)
 
 PLATFORMS: list[Platform] = [
     Platform.BUTTON,
+    Platform.IMAGE,
     Platform.LIGHT,
     Platform.SELECT,
     Platform.SENSOR,
@@ -137,6 +138,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: LukeRobertsConfigEntry) 
     )
     lamp.ble_present = ble_device is not None
     lamp.scene_backups = SceneBackupStore(hass, entry.unique_id or entry.entry_id)
+    await lamp.load_scene_records()
     entry.runtime_data = lamp
 
     if address and (power_entity := _option(entry, CONF_POWER_ENTITY)):
@@ -349,6 +351,7 @@ async def _async_read_details(
                 lamp.name,
                 err,
             )
+        await lamp.update_scene_records()
     finally:
         lamp.details_reading = False
     if (account := async_loaded_account(hass)) is not None:

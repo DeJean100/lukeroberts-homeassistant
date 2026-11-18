@@ -238,6 +238,12 @@ class FakeLampClient:
             self.kelvin = int.from_bytes(frame[3:5], "big")
         elif opcode == 0x05:
             self.is_on = frame[3] != 0x00
+            if frame[3] in self.scenes and self.scene_callback is not None:
+                # Like the lamp: report the new active scene.
+                self.active_scene = frame[3]
+                asyncio.get_running_loop().call_soon(
+                    self.scene_callback, None, bytearray([frame[3]])
+                )
             if self.is_on:
                 self.brightness = 42  # a scene brings its own brightness
         elif opcode == 0x08:

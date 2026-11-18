@@ -107,6 +107,8 @@ class LukeRobertsLamp:
         self.scene_backups: SceneBackupStore | None = None
         # One scene read or write at a time.
         self._scene_lock = asyncio.Lock()
+        # Scene records as last read (from the cache), for previews.
+        self.scene_records: dict[int, protocol.SceneRecord] = {}
         self._listeners: list[Callable[[], None]] = []
         # Counts scene reports from the lamp, to tell whether one arrived while
         # a command ran (the lamp notifies before it answers the command).
@@ -631,7 +633,32 @@ class LukeRobertsLamp:
             ) from err
         await self.scene_backups.set_cache(cache)
         self.state.last_route = ROUTE_BLUETOOTH
+        if cache.records != self.scene_records:
+            self.scene_records = dict(cache.records)
+            self.notify()
         return cache.revision, dict(cache.records)
+
+    async def load_scene_records(self) -> None:
+        """Take the scene records from the stored cache (no Bluetooth)."""
+        if self.scene_backups is not None and (
+            cache := await self.scene_backups.cache()
+        ):
+            self.scene_records = dict(cache.records)
+
+    async def update_scene_records(self) -> None:
+        """Catch up with scenes changed in the app, if records were read before.
+
+        Only the changes are asked for, so this is quick; the first full
+        read is left to the backup action because it can take a while
+        through a Bluetooth proxy. Errors are only logged.
+        """
+        if self.scene_backups is None or await self.scene_backups.cache() is None:
+            return
+        try:
+            async with self._scene_lock:
+                await self.read_scene_records()
+        except HomeAssistantError as err:
+            _LOGGER.debug("%s: scene records not updated: %s", self.name, err)
 
     async def _sync_changes(
         self, ble: LukeRobertsBle, cache: SceneCache
