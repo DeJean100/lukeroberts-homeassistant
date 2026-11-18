@@ -1,5 +1,14 @@
 # Changelog
 
+## Unreleased
+
+- **Scene preview, new look.** The uplight (indirect light) is drawn as a soft
+  aura of 16 colour blobs around a dark lamp disc that shows the downlight
+  spots; the aura no longer reaches into the disc. The picture is round with
+  transparent corners, and dim scenes are drawn perceptually so they stay
+  visible. The entity icon follows the scene straight away (the picture URL
+  carries a version).
+
 ## 0.3.0-dejean.3 (2026-11-18, fork DeJean100)
 
 - **Scene preview** image entity: the active scene drawn from its scene

@@ -1,8 +1,9 @@
 """SVG preview of a scene, drawn from its scene record (top view).
 
-The outer ring shows the 16 uplight segments in their colour and brightness,
-the blurred dots inside the 84 downlight spots (rings of 3, 6, ... 21 spots,
-inner ring first) at the scene's colour temperature. The orientation
+The 16 uplight segments are a soft aura around the lamp (indirect light,
+so not drawn exactly), the 84 downlight spots (rings of 3, 6, ... 21 spots,
+inner ring first) blurred dots on the dark lamp disc at the scene's colour
+temperature. Round, with transparent corners. The orientation
 (counter-clockwise from the top) matches the Luke Roberts app for a captured
 scene; colours are an approximation of the real light.
 
@@ -23,6 +24,8 @@ UPLIGHT_SEGMENTS = 16
 DOWNLIGHT_RINGS = (3, 6, 9, 12, 15, 18, 21)
 _UPLIGHT_OFFSET = SCENE_HEADER_LENGTH + 2
 _DOWNLIGHT_OFFSET = _UPLIGHT_OFFSET + 4 * UPLIGHT_SEGMENTS
+LAMP_RADIUS = 0.29  # dark lamp disc, the uplight aura stays outside it
+SPOT_RADIUS = 0.23  # outer downlight ring
 
 
 def kelvin_to_rgb(kelvin: int) -> tuple[int, int, int]:
@@ -48,44 +51,70 @@ def _uplight_rgb(saturation: int, value: int) -> tuple[int, int, int]:
     return round(red * 255), round(green * 255), round(blue * 255)
 
 
-def _opacity(level: int) -> str:
+def _opacity(level: int, scale: float = 1.0) -> str:
     """Perceived brightness: dim levels look brighter than linear (sqrt)."""
-    return f"{math.sqrt(level / 255):.2f}"
+    return f"{math.sqrt(level / 255) * scale:.2f}"
 
 
-def _angle(index: int, count: int) -> float:
+def _angle(index: float, count: int) -> float:
     """Counter-clockwise from the top, in screen coordinates."""
     return -2 * math.pi * index / count - math.pi / 2
 
 
 def _frame(body: str) -> bytes:
+    """A black disc with transparent corners; everything is clipped to it."""
+    center = SIZE / 2
     return (
         f'<svg xmlns="http://www.w3.org/2000/svg" width="{SIZE}" height="{SIZE}" '
         f'viewBox="0 0 {SIZE} {SIZE}">'
-        '<defs><filter id="glow" x="-50%" y="-50%" width="200%" height="200%">'
-        '<feGaussianBlur stdDeviation="9"/></filter></defs>'
-        f'<rect width="{SIZE}" height="{SIZE}" fill="#000"/>{body}</svg>'
+        "<defs>"
+        f'<clipPath id="disc"><circle cx="{center}" cy="{center}" r="{center}"/>'
+        "</clipPath>"
+        '<filter id="aura" x="-50%" y="-50%" width="200%" height="200%">'
+        f'<feGaussianBlur stdDeviation="{SIZE * 0.04:.1f}"/></filter>'
+        '<filter id="glow" x="-50%" y="-50%" width="200%" height="200%">'
+        f'<feGaussianBlur stdDeviation="{SIZE * 0.028:.1f}"/></filter>'
+        '<radialGradient id="lamp"><stop offset="0" stop-color="#151515"/>'
+        '<stop offset=".85" stop-color="#070707"/>'
+        '<stop offset="1" stop-color="#000"/></radialGradient>'
+        "</defs>"
+        f'<g clip-path="url(#disc)"><circle cx="{center}" cy="{center}" '
+        f'r="{center}" fill="#000"/>{body}</g></svg>'
     ).encode()
 
 
-def message_svg(text: str) -> bytes:
-    """A dark tile with a short text, for scenes without a picture."""
+def _lamp_disc() -> str:
     center = SIZE / 2
+    return (
+        f'<circle cx="{center}" cy="{center}" r="{SIZE * LAMP_RADIUS:.1f}" '
+        'fill="url(#lamp)"/>'
+    )
+
+
+def message_svg(text: str) -> bytes:
+    """The lamp disc with a short text, for scenes without a picture."""
+    center = SIZE / 2
+    rows = text.split("\n")[:2]
     lines = "".join(
-        f'<text x="{center}" y="{center + 22 * (i - 0.5)}" fill="#aaa" '
-        f'font-family="sans-serif" font-size="17" text-anchor="middle">'
+        f'<text x="{center}" y="{center + 6 + 22 * (i - (len(rows) - 1) / 2):.1f}" '
+        'fill="#999" font-family="sans-serif" font-size="18" text-anchor="middle">'
         f"{escape(line)}</text>"
-        for i, line in enumerate(text.split("\n")[:2])
+        for i, line in enumerate(rows)
     )
-    ring = (
-        f'<circle cx="{center}" cy="{center}" r="{SIZE * 0.44}" fill="none" '
-        'stroke="#333" stroke-width="3"/>'
+    rim = (
+        f'<circle cx="{center}" cy="{center}" r="{SIZE * 0.35:.1f}" fill="none" '
+        f'stroke="#2a2a2a" stroke-width="{SIZE * 0.05:.1f}"/>'
     )
-    return _frame(ring + lines)
+    return _frame(rim + _lamp_disc() + lines)
 
 
 def scene_svg(record: SceneRecord) -> bytes:
-    """Picture of a scene record; a text tile for other record types."""
+    """Picture of a scene record; a text tile for other record types.
+
+    The uplight is indirect light, so it is drawn as a soft aura of 16
+    blurred colour blobs around the lamp; the downlight spots are drawn on
+    the dark lamp disc, which the aura does not reach.
+    """
     if record.scene_type == SceneType.NAME_ONLY:
         return message_svg("Off")
     if record.scene_type == SceneType.DYNAMIC:
@@ -94,24 +123,20 @@ def scene_svg(record: SceneRecord) -> bytes:
         return message_svg("No scene")
     raw = record.raw
     center = SIZE / 2
-    parts: list[str] = []
 
-    # Uplight: 16 arcs on the outer ring.
-    radius = SIZE * 0.44
+    # Uplight: 16 soft colour blobs around the lamp.
+    blobs: list[str] = []
     for segment in range(UPLIGHT_SEGMENTS):
         offset = _UPLIGHT_OFFSET + 4 * segment
-        saturation = raw[offset]
-        value = struct.unpack_from("<H", raw, offset + 1)[0]
-        brightness = raw[offset + 3]
-        start = _angle(segment, UPLIGHT_SEGMENTS)
-        end = _angle(segment + 1, UPLIGHT_SEGMENTS)
-        x0, y0 = center + radius * math.cos(start), center + radius * math.sin(start)
-        x1, y1 = center + radius * math.cos(end), center + radius * math.sin(end)
-        red, green, blue = _uplight_rgb(saturation, value)
-        parts.append(
-            f'<path d="M{x0:.1f},{y0:.1f} A{radius:.1f},{radius:.1f} 0 0 0 '
-            f'{x1:.1f},{y1:.1f}" fill="none" stroke="rgb({red},{green},{blue})" '
-            f'stroke-opacity="{_opacity(brightness)}" stroke-width="{SIZE * 0.07:.1f}"/>'
+        red, green, blue = _uplight_rgb(
+            raw[offset], struct.unpack_from("<H", raw, offset + 1)[0]
+        )
+        angle = _angle(segment + 0.5, UPLIGHT_SEGMENTS)
+        blobs.append(
+            f'<circle cx="{center + SIZE * 0.35 * math.cos(angle):.1f}" '
+            f'cy="{center + SIZE * 0.35 * math.sin(angle):.1f}" '
+            f'r="{SIZE * 0.085:.1f}" fill="rgb({red},{green},{blue})" '
+            f'fill-opacity="{_opacity(raw[offset + 3], 0.95)}"/>'
         )
 
     # Downlight: 84 spots in 7 rings at the scene's colour temperature.
@@ -120,7 +145,7 @@ def scene_svg(record: SceneRecord) -> bytes:
     spots: list[str] = []
     index = _DOWNLIGHT_OFFSET
     for ring, count in enumerate(DOWNLIGHT_RINGS, start=1):
-        ring_radius = SIZE * 0.34 * ring / len(DOWNLIGHT_RINGS)
+        ring_radius = SIZE * SPOT_RADIUS * ring / len(DOWNLIGHT_RINGS)
         for spot in range(count):
             level = raw[index]
             index += 1
@@ -130,8 +155,11 @@ def scene_svg(record: SceneRecord) -> bytes:
             spots.append(
                 f'<circle cx="{center + ring_radius * math.cos(angle):.1f}" '
                 f'cy="{center + ring_radius * math.sin(angle):.1f}" '
-                f'r="{SIZE * 0.05:.1f}" fill="rgb({red},{green},{blue})" '
+                f'r="{SIZE * 0.042:.1f}" fill="rgb({red},{green},{blue})" '
                 f'fill-opacity="{_opacity(level)}"/>'
             )
-    parts.append(f'<g filter="url(#glow)">{"".join(spots)}</g>')
-    return _frame("".join(parts))
+    return _frame(
+        f'<g filter="url(#aura)">{"".join(blobs)}</g>'
+        + _lamp_disc()
+        + f'<g filter="url(#glow)">{"".join(spots)}</g>'
+    )

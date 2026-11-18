@@ -250,8 +250,8 @@ only the scenes changed since then are asked for. The first read can take
 up to a minute through a Bluetooth proxy; after that it takes a moment.
 
 **Scene preview:** `image.<lamp>_scene_preview` shows the active scene as
-a picture (top view): the uplight colours as a ring and the downlight spots
-inside. It needs one `backup_scenes` first; after that it follows the scene
+a round picture (top view): the uplight as a soft colour aura around the
+lamp and the downlight spots on the lamp disc. It needs one `backup_scenes` first; after that it follows the scene
 and is updated with *Refresh scenes*. Off and animated scenes such as *Demo*
 show a text instead. Colours are an approximation of the real light.
 

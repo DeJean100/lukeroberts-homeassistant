@@ -34,14 +34,20 @@ def _records() -> dict[int, protocol.SceneRecord]:
     return {r.scene_id: r for r in protocol.parse_scene_records(stream)}
 
 
+def _group(svg: ET.Element, name: str) -> ET.Element:
+    return next(g for g in svg.iter(f"{SVG}g") if g.get("filter") == f"url(#{name})")
+
+
 def test_scene_svg_draws_uplight_and_spots() -> None:
-    """16 uplight arcs and one dot per lit downlight spot."""
+    """16 uplight blobs, one dot per lit downlight spot, round transparent tile."""
     records = _records()
     bright = ET.fromstring(scene_svg(records[7]))  # every spot at full
-    assert len(bright.findall(f".//{SVG}path")) == 16
-    assert len(bright.findall(f".//{SVG}circle")) == 84
+    assert len(_group(bright, "aura").findall(f"{SVG}circle")) == 16
+    assert len(_group(bright, "glow").findall(f"{SVG}circle")) == 84
+    assert bright.find(f"{SVG}rect") is None  # corners stay transparent
+    assert bright.find(f".//{SVG}clipPath") is not None
     indirect = ET.fromstring(scene_svg(records[1]))  # uplight only
-    assert indirect.findall(f".//{SVG}circle") == []
+    assert _group(indirect, "glow").findall(f"{SVG}circle") == []
 
 
 def test_scene_svg_other_types() -> None:
