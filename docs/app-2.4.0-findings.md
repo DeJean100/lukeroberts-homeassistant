@@ -81,20 +81,70 @@ API frame: `A0 <api> <opcode|flags> [PIN u16 if flag 0x40] [id u16 if flag 0x80]
 
 ## Scenes
 
-Scenes are written as raw records to `…43`, big endian:
+Scenes are written as raw records to `…43`. Multi-byte numbers are **little
+endian** (the static analysis suggested big endian; the capture below shows
+otherwise).
 
 * Header (8 bytes): `01, sceneId, sortIndex, wireType, int32 groupId`
 * wireType 1, static scene (178 bytes): header, u16 downlight kelvin,
   uplight 16 segments × `[sat, u16 hue*65535 (or kelvin if sat=0), bri]`,
   downlight 84 bytes per spot brightness (rings of 0/3/6/…/21), 20 byte name
-* wireType 2 (108 bytes): header, 80 zero bytes, name (*guess*: dynamic scene)
-* wireType 3 (28 bytes): header and name
-* wireType 0: delete
+* wireType 2 (108 bytes): header, u16 kelvin, 78 zero bytes, name. Seen on
+  the built-in dynamic scene "Demo"; the animation itself is not in the record.
+* wireType 3 (28 bytes): header and name (the "Off" scene, id 0)
+* wireType 0 (8 bytes, header only): delete; also how empty slots are reported
 * New scenes are written with sceneId 254.
 
-Reading: Sync command on `…42`, settings arrive on `…41`, scene records on
-`…43`. Preview without saving: write `64, u16 kelvin, 64 B uplight, 84 B
-downlight` to `…45`.
+Preview without saving: write `64, u16 kelvin, 64 B uplight, 84 B downlight`
+to `…45` (*guess*, not captured yet).
+
+### Verified on a lamp (Model F, firmware 1.2.2, app on Android 17)
+
+Bluetooth HCI capture of the app creating, renaming and deleting a scene,
+and a Sync from a PC (2026-11-18):
+
+* **Create:** the app writes a full 178-byte record with header
+  `01 FE 00 01 00000000` (id 254, sort 0). The lamp answers on `…42` with
+  `00 <revision u32 LE> <sceneId> <sortIndex>`, e.g. `00 065E0200 06 4B`:
+  revision 0x025E06, new scene id 6, sort index 0x4B. It also notifies the
+  new id on `…44` (the lamp switches to the new scene).
+* **Rename / edit:** the app writes the same 178-byte record again with the
+  real id and sort index in the header and the changed fields (only the
+  name for a rename).
+* **Delete:** the app first selects another scene on `…44`, then writes the
+  8-byte header with wireType 0: `01 06 4B 00 00000000`.
+* Every write bumps the revision by one.
+* Uplight segment example: `A2 701F 92` is saturation 0xA2, hue 0x1F70
+  (44°, orange), brightness 0x92. With saturation 0 the u16 is a colour
+  temperature: `00 A00F FF` is 4000 K.
+
+### Sync (reading scenes)
+
+Write to `…42`:
+
+```
+07 <known revision u32 LE> <database id, 4 bytes> 00 01
+```
+
+The app sends the last revision it knows and the database id from the
+previous answer (`D2 B2 21 D0` on the test lamp). The lamp answers with
+notifications on `…41` (the 36-byte settings record, 12 bytes per
+notification, ending with a single `FF`), then on `…43` the records of every
+scene slot changed after that revision, also split into 12-byte
+notifications, and finally an indication on `…42`:
+
+```
+00 <revision u32 LE> 01 <records sent> <selected scene> 9C 00 <database id> 00 00
+```
+
+(Seen: `01 00 02` with no scene records and scene 2 selected, `01 01 04`
+with one record, `01 14 04` with all 20.)
+
+With revision `00000000` the lamp sends every slot: 20 slots (ids 0–19) on
+the test lamp, 1810 bytes in total, empty slots as 8-byte wireType 0
+records. The record size follows from the wireType byte, so the stream can
+be split without separators. What a Sync with a different or unknown
+database id does is not tested.
 
 ## Security
 
