@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.3.0-dejean.3 (2026-11-18, fork DeJean100)
 
 - **Scene preview** image entity: the active scene drawn from its scene
   record (uplight ring and downlight spots). The scene records are kept in
