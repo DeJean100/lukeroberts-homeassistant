@@ -1,10 +1,6 @@
 # Changelog
 
-## 0.3.0-dejean.1 (2026-11-18, fork DeJean100)
-
-Fork release with PR #16, PR #17 and the power switch option, which are
-not merged upstream yet. Same domain as the original, so it replaces it.
-
+## 0.3.0-dejean.2 (2026-11-18, fork DeJean100)
 
 - **Scene backup, rename and restore.** New actions
   `luke_roberts.backup_scenes`, `rename_scene` and `restore_scene` read and
@@ -22,7 +18,10 @@ not merged upstream yet. Same domain as the original, so it replaces it.
   unambiguous, and a damaged read is never taken over. Through an ESPHome
   proxy: first read about 25 s, rename or restore under 3 s.
 
-## Unreleased
+## 0.3.0-dejean.1 (2026-11-18, fork DeJean100)
+
+Fork release with PR #16, PR #17 and the power switch option, which are
+not merged upstream yet. Same domain as the original, so it replaces it.
 
 - **Power switch option.** A lamp on a switched circuit (KNX or Shelly
   actuator, smart plug, relay) can name that light or switch entity as
