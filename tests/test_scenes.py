@@ -181,6 +181,7 @@ async def _lamp(hass: HomeAssistant, client: FakeLampClient) -> LukeRobertsLamp:
     ble = LukeRobertsBle(service_info().device, "Lamp", linger=0)
     lamp = LukeRobertsLamp("Lamp", MODE_LOCAL_ONLY, ble, None, None)
     lamp.scene_backups = SceneBackupStore(hass, "test")
+    ble.add_scene_listener(lamp.scene_reported)
     return lamp
 
 
@@ -513,3 +514,102 @@ async def test_scene_actions(hass: HomeAssistant) -> None:
         assert response[LIGHT]["reason"] == "before renaming scene 1"
         await hass.async_block_till_done()
         assert "Lesen" in hass.states.get(LIGHT).attributes[ATTR_EFFECT_LIST]
+
+
+async def test_duplicate_scene(hass: HomeAssistant) -> None:
+    """A copy goes to a free slot; the lamp picks id and sort index."""
+    client = FakeLampClient()
+    source = client.records[2]
+    with patch(
+        "custom_components.luke_roberts.ble.establish_connection",
+        AsyncMock(return_value=client),
+    ):
+        lamp = await _lamp(hass, client)
+        new_id = await lamp.duplicate_scene(2, "Gemütlich 2")
+        assert new_id == 4  # the free slot of the fake lamp
+        written = client.record_writes[-1]
+        assert written[:4] == bytes([0x01, 0xFE, 0x00, 0x01])
+        assert written[8:-20] == source[8:-20]
+        stored = protocol.SceneRecord(client.records[4])
+        assert stored.name == "Gemütlich 2"
+        assert stored.sort_index == 0x4B
+        assert lamp.state.scenes[4] == "Gemütlich 2"
+        assert client.records[2] == source
+        backup = await lamp.scene_backups.latest()
+        assert backup.reason == "before duplicating scene 2"
+
+        # No free slot left, Off and dynamic scenes: refused, nothing written.
+        writes = len(client.record_writes)
+        for scene_id, name in ((2, "Noch eine"), (0, "Aus 2"), (3, "Demo 2")):
+            with pytest.raises(ServiceValidationError):
+                await lamp.duplicate_scene(scene_id, name)
+        assert len(client.record_writes) == writes
+        await lamp.ble.disconnect()
+
+
+async def test_duplicate_memory_full(hass: HomeAssistant) -> None:
+    """The lamp's 'memory full' answer becomes a clear error."""
+    client = FakeLampClient()
+
+    def full(record: bytes) -> bytes:
+        client.record_writes.append(record)
+        return b"\x85"
+
+    client._write_record = full  # type: ignore[method-assign]
+    with patch(
+        "custom_components.luke_roberts.ble.establish_connection",
+        AsyncMock(return_value=client),
+    ):
+        lamp = await _lamp(hass, client)
+        with pytest.raises(HomeAssistantError, match="no room"):
+            await lamp.duplicate_scene(1, "Lesen 2")
+        await lamp.ble.disconnect()
+
+
+async def test_duplicate_action(hass: HomeAssistant) -> None:
+    """duplicate_scene returns the new id; the copy appears in the list."""
+    client = FakeLampClient()
+    await _setup_ble(hass, client)
+    with patch(
+        "custom_components.luke_roberts.ble.establish_connection",
+        AsyncMock(return_value=client),
+    ):
+        response = await hass.services.async_call(
+            DOMAIN,
+            "duplicate_scene",
+            {ATTR_ENTITY_ID: LIGHT, "scene": "Lesen", "name": "Lesen warm"},
+            blocking=True,
+            return_response=True,
+        )
+        await hass.async_block_till_done()
+    assert response[LIGHT] == {"scene_id": 4, "name": "Lesen warm"}
+    assert "Lesen warm" in hass.states.get(LIGHT).attributes[ATTR_EFFECT_LIST]
+
+
+async def test_delete_only_own_scenes(hass: HomeAssistant) -> None:
+    """Only scenes made by duplicate_scene can be deleted; Default first."""
+    client = FakeLampClient()
+    with patch(
+        "custom_components.luke_roberts.ble.establish_connection",
+        AsyncMock(return_value=client),
+    ):
+        lamp = await _lamp(hass, client)
+        with pytest.raises(ServiceValidationError, match="not created"):
+            await lamp.delete_scene(1)
+        new_id = await lamp.duplicate_scene(1, "Lesen 2")
+        await hass.async_block_till_done()
+        assert lamp.state.scene_id == new_id  # the lamp switched to the copy
+
+        client.written.clear()
+        await lamp.delete_scene(new_id)
+        assert protocol.select_scene(0xFF) in client.written
+        assert client.record_writes[-1] == bytes([0x01, new_id, 0x4B, 0, 0, 0, 0, 0])
+        assert protocol.SceneRecord(client.records[new_id]).is_empty
+        assert new_id not in lamp.state.scenes
+        assert await lamp.scene_backups.created() == set()
+        assert (await lamp.scene_backups.latest()).reason == (
+            f"before deleting scene {new_id}"
+        )
+        with pytest.raises(ServiceValidationError):
+            await lamp.delete_scene(new_id)
+        await lamp.ble.disconnect()

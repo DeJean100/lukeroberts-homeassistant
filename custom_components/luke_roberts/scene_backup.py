@@ -105,6 +105,8 @@ class SceneBackupStore:
         self._loaded = False
         self._backups: list[SceneBackup] = []
         self._cache: SceneCache | None = None
+        # Ids of scenes this integration created (only those may be deleted).
+        self._created: set[int] = set()
 
     async def _load(self) -> None:
         if self._loaded:
@@ -115,12 +117,15 @@ class SceneBackupStore:
         ]
         if cache := data.get("cache"):
             self._cache = SceneCache.from_dict(cache)
+        self._created = set(data.get("created", []))
         self._loaded = True
 
     async def _save(self) -> None:
         data: dict[str, Any] = {"backups": [item.as_dict() for item in self._backups]}
         if self._cache is not None:
             data["cache"] = self._cache.as_dict()
+        if self._created:
+            data["created"] = sorted(self._created)
         await self._store.async_save(data)
 
     async def backups(self) -> list[SceneBackup]:
@@ -158,4 +163,18 @@ class SceneBackupStore:
         """Keep the scene records as last read."""
         await self._load()
         self._cache = cache
+        await self._save()
+
+    async def created(self) -> set[int]:
+        """Ids of the scenes this integration created."""
+        await self._load()
+        return set(self._created)
+
+    async def set_created(self, scene_id: int, created: bool) -> None:
+        """Remember or forget that this integration created a scene."""
+        await self._load()
+        if created:
+            self._created.add(scene_id)
+        else:
+            self._created.discard(scene_id)
         await self._save()

@@ -829,12 +829,85 @@ class LukeRobertsLamp:
         await self._write_scene(protocol.SceneRecord(raw))
         return source
 
-    async def _write_scene(self, record: protocol.SceneRecord) -> None:
-        """Write a record to its existing slot and check what the lamp stored."""
+    async def duplicate_scene(self, scene_id: int, name: str) -> int:
+        """Copy a static scene into a free slot under a new name.
+
+        Like creating a scene in the app, the lamp switches to the new
+        scene. Returns the id the lamp gave it.
+        """
+        try:
+            protocol.encode_scene_name(name)
+        except protocol.SceneRecordError as err:
+            raise ServiceValidationError(f"{self.name}: {err}") from err
+        async with self._scene_lock:
+            revision, records = await self.read_scene_records()
+            assert self.scene_backups is not None
+            source = records.get(scene_id)
+            if source is None or source.scene_type != protocol.SceneType.STATIC:
+                raise ServiceValidationError(
+                    f"{self.name}: scene {scene_id} is not a static scene; only "
+                    "static scenes can be copied"
+                )
+            if not any(record.is_empty for record in records.values()):
+                raise ServiceValidationError(
+                    f"{self.name}: the lamp has no free scene slot"
+                )
+            raw = source.with_name(name).raw
+            copy = protocol.SceneRecord(
+                bytes([protocol.SCENE_RECORD_VERSION, protocol.SCENE_NEW, 0]) + raw[3:]
+            )
+            await self.scene_backups.add(
+                records, revision, f"before duplicating scene {scene_id}"
+            )
+            new_id = await self._write_scene(copy)
+            await self.scene_backups.set_created(new_id, True)
+            return new_id
+
+    async def delete_scene(self, scene_id: int) -> None:
+        """Delete a scene that this integration created (with duplicate_scene).
+
+        Scenes made in the app are never deleted from Home Assistant. If the
+        scene is active, Default is selected first, as the app does.
+        """
+        if self.scene_backups is None:
+            raise HomeAssistantError(f"{self.name}: no storage for scene backups")
+        async with self._scene_lock:
+            if scene_id not in await self.scene_backups.created():
+                raise ServiceValidationError(
+                    f"{self.name}: scene {scene_id} was not created by Home "
+                    "Assistant; delete it in the Luke Roberts app"
+                )
+            revision, records = await self.read_scene_records()
+            record = records.get(scene_id)
+            if record is None or record.is_empty:
+                await self.scene_backups.set_created(scene_id, False)
+                raise ServiceValidationError(
+                    f"{self.name}: there is no scene {scene_id} (anymore)"
+                )
+            await self.scene_backups.add(
+                records, revision, f"before deleting scene {scene_id}"
+            )
+            if self.state.scene_id == scene_id:
+                await self.turn_on(scene_id=SCENE_DEFAULT)
+            header = bytes(
+                [protocol.SCENE_RECORD_VERSION, scene_id, record.sort_index]
+            ) + bytes([protocol.SceneType.EMPTY, 0, 0, 0, 0])
+            await self._write_scene(protocol.SceneRecord(header))
+            await self.scene_backups.set_created(scene_id, False)
+
+    async def _write_scene(self, record: protocol.SceneRecord) -> int:
+        """Write a record and check what the lamp stored; returns the scene id.
+
+        A record with id ``SCENE_NEW`` creates a scene, the lamp picks the id.
+        """
         ble = self._scene_ble()
         try:
             answer = await ble.write_scene_record(record.raw)
         except protocol.LampError as err:
+            if err.status == protocol.Status.MEMORY_FULL:
+                raise HomeAssistantError(
+                    f"{self.name}: the lamp has no room for another scene"
+                ) from err
             raise HomeAssistantError(
                 f"{self.name}: the lamp rejected the scene ({err})"
             ) from err
@@ -848,24 +921,27 @@ class LukeRobertsLamp:
             answer.scene_id,
             answer.revision,
         )
+        new = record.scene_id == protocol.SCENE_NEW
+        expected_id = answer.scene_id if new else record.scene_id
         try:
             _, records = await self.read_scene_records()
         except HomeAssistantError as err:
             raise HomeAssistantError(
-                f"{self.name}: scene {record.scene_id} was written (the lamp "
+                f"{self.name}: scene {expected_id} was written (the lamp "
                 f"confirmed it) but could not be read back to check it: {err}"
             ) from err
-        stored = records.get(record.scene_id)
+        stored = records.get(expected_id)
         if (
-            answer.scene_id != record.scene_id
+            answer.scene_id != expected_id
             or stored is None
             or (stored.raw[3:] != record.raw[3:])
         ):
             raise HomeAssistantError(
-                f"{self.name}: the lamp did not store scene {record.scene_id} as "
+                f"{self.name}: the lamp did not store scene {expected_id} as "
                 "sent; a backup of the previous scenes was kept"
             )
         await self.refresh_scenes()
+        return expected_id
 
     async def read_device_info(self) -> dict[str, str]:
         """Read the Device Information Service. BLE only."""

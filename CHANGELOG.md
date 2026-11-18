@@ -1,5 +1,15 @@
 # Changelog
 
+## Unreleased
+
+- **Scene preview** image entity: the active scene drawn from its scene
+  record (uplight ring and downlight spots). The scene records are kept in
+  memory and updated with the changes at startup and with *Refresh scenes*.
+- **`luke_roberts.duplicate_scene`** copies a static scene into a free slot
+  under a new name (the lamp switches to it, as in the app) and returns the
+  new id. **`luke_roberts.delete_scene`** deletes only scenes Home Assistant
+  created that way. Both make a backup first and check the result.
+
 ## 0.3.0-dejean.2 (2026-11-18, fork DeJean100)
 
 - **Scene backup, rename and restore.** New actions

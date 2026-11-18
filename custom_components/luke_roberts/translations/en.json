@@ -203,6 +203,30 @@
           "description": "Name or id of the scene."
         }
       }
+    },
+    "duplicate_scene": {
+      "name": "Duplicate scene",
+      "description": "Copy a static scene stored in the lamp into a free slot under a new name (Bluetooth only). A backup of all scenes is made first. Like in the app, the lamp switches to the new scene. Returns the new scene id.",
+      "fields": {
+        "scene": {
+          "name": "Scene",
+          "description": "Name or id of the scene to copy."
+        },
+        "name": {
+          "name": "Name of the copy",
+          "description": "At most 20 bytes (UTF-8)."
+        }
+      }
+    },
+    "delete_scene": {
+      "name": "Delete scene",
+      "description": "Delete a scene that Home Assistant created with Duplicate scene (Bluetooth only). Scenes made in the Luke Roberts app are never deleted. A backup of all scenes is made first.",
+      "fields": {
+        "scene": {
+          "name": "Scene",
+          "description": "Name or id of the scene."
+        }
+      }
     }
   },
   "exceptions": {

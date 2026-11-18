@@ -203,6 +203,30 @@
           "description": "Name oder ID der Szene."
         }
       }
+    },
+    "duplicate_scene": {
+      "name": "Szene duplizieren",
+      "description": "Kopiert eine statische Szene der Lampe unter neuem Namen in einen freien Platz (nur Bluetooth). Vorher werden alle Szenen gesichert. Wie in der App wechselt die Lampe zur neuen Szene. Gibt die neue Szenen-ID zurück.",
+      "fields": {
+        "scene": {
+          "name": "Szene",
+          "description": "Name oder ID der zu kopierenden Szene."
+        },
+        "name": {
+          "name": "Name der Kopie",
+          "description": "Höchstens 20 Bytes (UTF-8)."
+        }
+      }
+    },
+    "delete_scene": {
+      "name": "Szene löschen",
+      "description": "Löscht eine Szene, die Home Assistant mit Szene duplizieren angelegt hat (nur Bluetooth). In der Luke Roberts App angelegte Szenen werden nie gelöscht. Vorher werden alle Szenen gesichert.",
+      "fields": {
+        "scene": {
+          "name": "Szene",
+          "description": "Name oder ID der Szene."
+        }
+      }
     }
   },
   "exceptions": {

@@ -27,6 +27,8 @@ from .const import (
     MIN_KELVIN,
     SCENE_OFF,
     SERVICE_BACKUP_SCENES,
+    SERVICE_DELETE_SCENE,
+    SERVICE_DUPLICATE_SCENE,
     SERVICE_IMMEDIATE_LIGHT,
     SERVICE_RENAME_SCENE,
     SERVICE_RESTORE_SCENE,
@@ -101,6 +103,15 @@ async def async_setup_entry(
     )
     platform.async_register_entity_service(
         SERVICE_RENAME_SCENE, RENAME_SCENE_SCHEMA, "async_rename_scene"
+    )
+    platform.async_register_entity_service(
+        SERVICE_DELETE_SCENE, SCENE_SCHEMA, "async_delete_scene"
+    )
+    platform.async_register_entity_service(
+        SERVICE_DUPLICATE_SCENE,
+        RENAME_SCENE_SCHEMA,
+        "async_duplicate_scene",
+        supports_response=SupportsResponse.OPTIONAL,
     )
     platform.async_register_entity_service(
         SERVICE_RESTORE_SCENE,
@@ -272,3 +283,14 @@ class LukeRobertsLight(LukeRobertsEntity, LightEntity, RestoreEntity):
         """Write a scene back from the newest backup that differs."""
         backup = await self._lamp.restore_scene(self._scene_id(kwargs[ATTR_SCENE]))
         return {"restored_from": backup.time, "reason": backup.reason}
+
+    async def async_duplicate_scene(self, **kwargs: Any) -> ServiceResponse:
+        """Copy a static scene under a new name (a backup is made first)."""
+        scene_id = await self._lamp.duplicate_scene(
+            self._scene_id(kwargs[ATTR_SCENE]), kwargs[ATTR_NAME]
+        )
+        return {"scene_id": scene_id, "name": kwargs[ATTR_NAME].strip()}
+
+    async def async_delete_scene(self, **kwargs: Any) -> None:
+        """Delete a scene created by Home Assistant (a backup is made first)."""
+        await self._lamp.delete_scene(self._scene_id(kwargs[ATTR_SCENE]))

@@ -188,8 +188,21 @@ class FakeLampClient:
 
     def _write_record(self, record: bytes) -> bytes:
         self.record_writes.append(record)
-        self.revision += 1
         scene_id = record[1]
+        if scene_id == 0xFE:
+            # New scene: the first free slot, a sort index, and the lamp
+            # switches to it.
+            free = [i for i in sorted(self.records) if self.records[i][3] == 0x00]
+            if not free:
+                return b"\x85"
+            scene_id = free[0]
+            record = bytes([0x01, scene_id, 0x4B]) + record[3:]
+            self.active_scene = scene_id
+            if self.scene_callback is not None:
+                asyncio.get_running_loop().call_soon(
+                    self.scene_callback, None, bytearray([scene_id])
+                )
+        self.revision += 1
         if self.mangle_record is not None:
             record = self.mangle_record(record)
         if record[3] == 0x00:

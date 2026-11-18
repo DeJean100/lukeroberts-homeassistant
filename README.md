@@ -55,8 +55,8 @@ account, the command is sent through the Luke Roberts cloud instead.
 - `luke_roberts.immediate_light` action for the transient Immediate Light
   command, including the **coloured uplight** (hue/saturation) and the
   downlight, with optional automatic revert
-- **Scene backup, rename and restore** (`luke_roberts.backup_scenes`,
-  `rename_scene`, `restore_scene`), Bluetooth only, see below
+- **Scene backup, rename, restore, duplicate and delete** and a **scene
+  preview** image, Bluetooth only, see below
 - **Firmware entity** with the installed version and, with a firmware check
   key, the newest version from the Luke Roberts firmware server
 - **Connection modes**: Bluetooth first with cloud fallback, Bluetooth only,
@@ -221,7 +221,7 @@ data:
     seconds: 10                # 0 = keep until the next scene change
 ```
 
-### Scene backup, rename and restore
+### Scene backup, rename, restore, duplicate and delete
 
 Not part of the published Lamp Control API: the integration reads and writes
 the lamp's scene records the way the Luke Roberts app does. The format was
@@ -237,6 +237,22 @@ checked with a Bluetooth capture of the app and on a Model F with firmware
   scene and dynamic scenes such as *Demo* cannot be renamed.
 - `luke_roberts.restore_scene` writes a scene back as it was in the newest
   backup that differs from the lamp, e.g. to undo a rename.
+- `luke_roberts.duplicate_scene` copies a static scene into a free slot under
+  a new name and returns the new id. Like in the app, the lamp switches to
+  the new scene.
+- `luke_roberts.delete_scene` deletes a scene that Home Assistant created
+  with `duplicate_scene`. Scenes made in the app are never deleted from Home
+  Assistant.
+
+The scenes are read like the app does: a copy is kept in Home Assistant and
+only the scenes changed since then are asked for. The first read can take
+up to a minute through a Bluetooth proxy; after that it takes a moment.
+
+**Scene preview:** `image.<lamp>_scene_preview` shows the active scene as
+a picture (top view): the uplight colours as a ring and the downlight spots
+inside. It needs one `backup_scenes` first; after that it follows the scene
+and is updated with *Refresh scenes*. Off and animated scenes such as *Demo*
+show a text instead. Colours are an approximation of the real light.
 
 ```yaml
 action: luke_roberts.rename_scene

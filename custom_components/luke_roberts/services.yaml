@@ -72,3 +72,32 @@ restore_scene:
       example: "Candle Light"
       selector:
         text:
+
+duplicate_scene:
+  target:
+    entity:
+      integration: luke_roberts
+      domain: light
+  fields:
+    scene:
+      required: true
+      example: "Candle Light"
+      selector:
+        text:
+    name:
+      required: true
+      example: "Candle Light 2"
+      selector:
+        text:
+
+delete_scene:
+  target:
+    entity:
+      integration: luke_roberts
+      domain: light
+  fields:
+    scene:
+      required: true
+      example: "Candle Light 2"
+      selector:
+        text:
