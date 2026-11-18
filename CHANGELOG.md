@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.3.0-dejean.4 (2026-11-19, fork DeJean100)
 
 - **Scene preview, new look.** The uplight (indirect light) is drawn as a soft
   aura of 16 colour blobs around a dark lamp disc that shows the downlight
