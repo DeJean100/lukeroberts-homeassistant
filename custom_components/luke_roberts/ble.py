@@ -216,47 +216,57 @@ class LukeRobertsBle:
         finally:
             self._response = None
 
-    async def sync_scenes(self) -> tuple[protocol.SyncDone, list[protocol.SceneRecord]]:
-        """Read every scene record with the Sync command (from revision 0).
+    async def sync_scenes(
+        self, revision: int, database: bytes, timeout: float = SYNC_TIMEOUT
+    ) -> tuple[protocol.SyncDone | None, bytes]:
+        """Send one Sync and return the final answer and the raw record stream.
 
         The lamp sends the settings record on its own characteristic, then
-        the scene records split into notifications on the scene record
-        characteristic, and finally the answer on the API characteristic.
+        the scene records changed after ``revision`` split into notifications
+        on the scene record characteristic, and finally the answer on the API
+        characteristic. The answer is None if it did not arrive in time. The
+        stream is returned as received: a Bluetooth proxy may drop
+        notifications, so the caller checks it.
+
+        The settings notifications are always subscribed: without them the
+        lamp answers a Sync with nothing to send with status 0x82.
         """
         stream = bytearray()
 
         def on_record(_sender: object, data: bytearray) -> None:
-            _LOGGER.debug("%s: <- 2843 %s", self._name, bytes(data).hex(" "))
             stream.extend(data)
 
         def on_settings(_sender: object, data: bytearray) -> None:
             pass  # the settings record is not used (yet)
 
+        done: protocol.SyncDone | None = None
         async with self._lock:
             client = await self._ensure_connected()
             await client.start_notify(SETTINGS_CHAR_UUID, on_settings)
             await client.start_notify(SCENE_RECORD_CHAR_UUID, on_record)
             try:
-                done = protocol.parse_sync_done(
-                    await self._request_locked(protocol.sync(), timeout=SYNC_TIMEOUT)
-                )
                 try:
-                    records = protocol.parse_scene_records(bytes(stream))
-                except protocol.SceneRecordError:
-                    _LOGGER.debug("%s: scene stream %s", self._name, stream.hex())
-                    raise
+                    response = await self._request_locked(
+                        protocol.sync(revision, database), timeout=timeout
+                    )
+                except TimeoutError:
+                    _LOGGER.debug("%s: no answer to Sync", self._name)
+                else:
+                    done = protocol.parse_sync_done(response)
             finally:
                 for uuid in (SCENE_RECORD_CHAR_UUID, SETTINGS_CHAR_UUID):
                     with contextlib.suppress(Exception):
                         await client.stop_notify(uuid)
         self._last_command = time.monotonic()
         self._schedule_keepalive()
-        if len(records) != done.records:
-            raise protocol.SceneRecordError(
-                f"the lamp announced {done.records} scene records, "
-                f"{len(records)} arrived"
-            )
-        return done, records
+        _LOGGER.debug(
+            "%s: Sync from 0x%X: %d bytes, %s",
+            self._name,
+            revision,
+            len(stream),
+            done,
+        )
+        return done, bytes(stream)
 
     async def write_scene_record(self, record: bytes) -> protocol.SceneWrite:
         """Write one scene record; the lamp answers on the API characteristic."""

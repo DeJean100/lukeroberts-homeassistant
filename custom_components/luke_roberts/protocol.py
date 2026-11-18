@@ -434,3 +434,63 @@ def parse_scene_write(response: bytes) -> SceneWrite:
         scene_id=response[5],
         sort_index=response[6],
     )
+
+
+def _plausible(record: bytes) -> bool:
+    """Extra checks on a record found in a damaged stream."""
+    scene_type = record[3]
+    if record[4:8] != bytes(4):
+        return False
+    if scene_type == SceneType.EMPTY:
+        return True
+    name = record[-SCENE_NAME_LENGTH:]
+    end = name.find(b"\x00")
+    if end >= 0 and any(name[end:]):
+        return False  # garbage after the name
+    try:
+        name[: end if end >= 0 else None].decode("utf-8")
+    except UnicodeDecodeError:
+        return False
+    if scene_type in (SceneType.STATIC, SceneType.DYNAMIC):
+        kelvin = struct.unpack_from("<H", record, SCENE_HEADER_LENGTH)[0]
+        return 1000 <= kelvin <= 10000
+    return True
+
+
+def _header_at(stream: bytes, offset: int, scene_id: int) -> bool:
+    header = stream[offset : offset + SCENE_HEADER_LENGTH]
+    return (
+        len(header) == SCENE_HEADER_LENGTH
+        and header[0] == SCENE_RECORD_VERSION
+        and header[1] == scene_id
+        and header[3] in SCENE_RECORD_LENGTH
+        and header[4:8] == bytes(4)
+    )
+
+
+def recover_scene_records(stream: bytes, slots: int) -> dict[int, SceneRecord]:
+    """Intact records from a full Sync (all slots) that may have gaps.
+
+    A full Sync sends the slots 0..slots-1 in order. A Bluetooth proxy may
+    drop notifications, which shortens the stream but keeps the order. A
+    record is taken only if it starts with the header of its id and the
+    header of the next id starts exactly where the record ends (or the
+    stream ends there, for the last slot), so a record with a gap inside is
+    never accepted.
+    """
+    found: dict[int, SceneRecord] = {}
+    for offset in range(len(stream) - SCENE_HEADER_LENGTH + 1):
+        scene_id = stream[offset + 1]
+        if scene_id >= slots or scene_id in found:
+            continue
+        if not _header_at(stream, offset, scene_id):
+            continue
+        end = offset + SCENE_RECORD_LENGTH[stream[offset + 3]]  # type: ignore[index]
+        if scene_id == slots - 1:
+            complete = end == len(stream)
+        else:
+            complete = _header_at(stream, end, scene_id + 1)
+        record = stream[offset:end]
+        if complete and _plausible(record):
+            found[scene_id] = SceneRecord(bytes(record))
+    return found

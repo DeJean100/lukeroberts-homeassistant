@@ -115,16 +115,19 @@ def test_scene_names() -> None:
 
 
 async def test_ble_sync_and_write() -> None:
-    """Sync collects the chunked records; writes go to the record characteristic."""
+    """Sync returns the answer and the raw stream; writes go to the record char."""
     client = FakeLampClient()
     with patch(
         "custom_components.luke_roberts.ble.establish_connection",
         AsyncMock(return_value=client),
     ):
         ble = LukeRobertsBle(service_info().device, "Lamp", linger=0)
-        done, records = await ble.sync_scenes()
+        done, stream = await ble.sync_scenes(0, bytes(4))
         assert client.written[-1] == protocol.sync()
+        assert done is not None
         assert done.records == 5
+        assert done.database == client.database
+        records = protocol.parse_scene_records(stream)
         assert [record.scene_id for record in records] == [0, 1, 2, 3, 4]
         assert records[2].name == "Gemütlich"
         assert not client.notify_callbacks  # unsubscribed again
@@ -132,21 +135,42 @@ async def test_ble_sync_and_write() -> None:
         answer = await ble.write_scene_record(static_record(1, "Lesen 2", 10))
         assert answer.scene_id == 1
         assert answer.revision == client.revision
+
+        # Only the changed record since the previous revision.
+        done, stream = await ble.sync_scenes(answer.revision - 1, client.database)
+        assert done is not None
+        assert done.records == 1
+        assert protocol.parse_scene_records(stream)[0].name == "Lesen 2"
         await ble.disconnect()
 
 
-async def test_ble_sync_detects_missing_records() -> None:
-    """A Sync that announces more records than arrived raises."""
+async def test_ble_sync_without_answer() -> None:
+    """A lost final answer gives None, not an exception."""
     client = FakeLampClient()
-    client.sync_count_offset = 1
+    client.drop_done = 1
     with patch(
         "custom_components.luke_roberts.ble.establish_connection",
         AsyncMock(return_value=client),
     ):
         ble = LukeRobertsBle(service_info().device, "Lamp", linger=0)
-        with pytest.raises(protocol.SceneRecordError, match="announced 6"):
-            await ble.sync_scenes()
+        done, stream = await ble.sync_scenes(0, bytes(4), timeout=0.05)
+        assert done is None
+        assert stream
         await ble.disconnect()
+
+
+def test_recover_scene_records_from_damaged_streams() -> None:
+    """Records with a gap inside are dropped; the others are kept, never wrong."""
+    stream = bytes.fromhex(FIXTURE.read_text().replace("\n", ""))
+    reference = {r.scene_id: r for r in protocol.parse_scene_records(stream)}
+    assert protocol.recover_scene_records(stream, 20) == reference
+    chunks = [stream[i : i + 2] for i in range(0, len(stream), 2)]
+    for start in range(0, len(chunks), 7):
+        damaged = b"".join(chunks[:start] + chunks[start + 3 :])
+        recovered = protocol.recover_scene_records(damaged, 20)
+        assert 0 < len(recovered) < 20
+        for scene_id, record in recovered.items():
+            assert record == reference[scene_id]
 
 
 # --- Lamp ---------------------------------------------------------------------
@@ -228,7 +252,7 @@ async def test_restore_writes_the_backup_back(hass: HomeAssistant) -> None:
         lamp = await _lamp(hass, client)
         await lamp.rename_scene(2, "Kerzen")
         # The app moved the scene in the list meanwhile.
-        client.records[2] = client.records[2][:2] + b"\x33" + client.records[2][3:]
+        client.change_record(client.records[2][:2] + b"\x33" + client.records[2][3:])
 
         source = await lamp.restore_scene(2)
         assert source.reason == "before renaming scene 2"
@@ -261,6 +285,98 @@ async def test_backups_are_kept_and_limited(hass: HomeAssistant) -> None:
     backups = await store.backups()
     assert len(backups) == 20
     assert backups[-1].records[2].raw == client.records[2]
+
+
+async def test_cache_reads_only_changes(hass: HomeAssistant) -> None:
+    """After the first full read only changed scenes are asked for."""
+    client = FakeLampClient()
+    with patch(
+        "custom_components.luke_roberts.ble.establish_connection",
+        AsyncMock(return_value=client),
+    ):
+        lamp = await _lamp(hass, client)
+        await lamp.read_scene_records()
+        assert client.syncs == [(0, 5)]
+        await lamp.read_scene_records()
+        assert client.syncs[-1] == (client.revision, 0)
+
+        client.change_record(static_record(2, "Kerzenlicht", 20))
+        revision, records = await lamp.read_scene_records()
+        assert client.syncs[-1] == (client.revision - 1, 1)
+        assert records[2].name == "Kerzenlicht"
+        assert revision == client.revision
+
+        # A reset lamp (other database id) is read in full again.
+        client.database = bytes.fromhex("01020304")
+        await lamp.read_scene_records()
+        assert client.syncs[-1] == (0, 5)
+        cache = await lamp.scene_backups.cache()
+        assert cache.database == client.database
+        await lamp.ble.disconnect()
+
+
+async def test_full_read_collects_over_attempts(hass: HomeAssistant) -> None:
+    """A proxy that loses chunks: intact records are collected per attempt."""
+    client = FakeLampClient()
+    client.chunk = 2
+    attempt = {"n": 0}
+
+    def drop(n: int) -> bool:
+        if n == 0:
+            attempt["n"] += 1
+        # First attempt loses a chunk in scene 1, the second one in scene 2.
+        return (attempt["n"] == 1 and n == 30) or (attempt["n"] == 2 and n == 120)
+
+    client.drop_chunk = drop
+    with patch(
+        "custom_components.luke_roberts.ble.establish_connection",
+        AsyncMock(return_value=client),
+    ):
+        lamp = await _lamp(hass, client)
+        _, records = await lamp.read_scene_records()
+        assert attempt["n"] == 2
+        assert {k: v.raw for k, v in records.items()} == client.records
+        await lamp.ble.disconnect()
+
+
+async def test_changes_are_retried_and_never_half_taken(hass: HomeAssistant) -> None:
+    """Damaged or unanswered change reads are retried; the cache stays intact."""
+    client = FakeLampClient()
+    with (
+        patch(
+            "custom_components.luke_roberts.ble.establish_connection",
+            AsyncMock(return_value=client),
+        ),
+        patch("custom_components.luke_roberts.lamp.SYNC_CHANGES_TIMEOUT", 0.05),
+    ):
+        lamp = await _lamp(hass, client)
+        await lamp.read_scene_records()
+        client.change_record(static_record(1, "Lesen neu", 10))
+        client.drop_done = 1
+        tries = {"n": 0}
+
+        def drop(n: int) -> bool:
+            if n == 0:
+                tries["n"] += 1
+            return tries["n"] == 1 and n == 3
+
+        client.drop_chunk = drop
+        _, records = await lamp.read_scene_records()
+        assert records[1].name == "Lesen neu"
+
+        # Always damaged: an error, and the cache keeps the last good state.
+        client.change_record(static_record(1, "Kaputt", 10))
+        client.drop_chunk = lambda n: n == 2
+        with pytest.raises(HomeAssistantError, match="did not arrive complete"):
+            await lamp.read_scene_records()
+        cache = await lamp.scene_backups.cache()
+        assert cache.records[1].name == "Lesen neu"
+
+        # A rename is refused before anything is written.
+        with pytest.raises(HomeAssistantError, match="did not arrive complete"):
+            await lamp.rename_scene(2, "Neu")
+        assert client.record_writes == []
+        await lamp.ble.disconnect()
 
 
 async def test_scene_writes_need_bluetooth(hass: HomeAssistant) -> None:

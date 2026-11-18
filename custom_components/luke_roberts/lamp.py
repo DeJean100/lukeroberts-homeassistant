@@ -32,13 +32,17 @@ from .const import (
     SCENE_DEFAULT,
     SCENE_OFF,
 )
-from .scene_backup import SceneBackup, SceneBackupStore
+from .scene_backup import SceneBackup, SceneBackupStore, SceneCache
 
 _LOGGER = logging.getLogger(__name__)
 
 ROUTE_BLUETOOTH = "bluetooth"
 ROUTE_CLOUD = "cloud"
 RESTORE_REASON = "before restoring scene"
+# Reading scene records through a Bluetooth proxy that drops notifications.
+SYNC_CHANGES_ATTEMPTS = 10
+SYNC_CHANGES_TIMEOUT = 5.0
+SYNC_ALL_ATTEMPTS = 12
 
 
 class PowerSwitch(Protocol):
@@ -101,6 +105,8 @@ class LukeRobertsLamp:
         self._power_on_requested: float | None = None
         # Backups of the scene records, kept before every scene write.
         self.scene_backups: SceneBackupStore | None = None
+        # One scene read or write at a time.
+        self._scene_lock = asyncio.Lock()
         self._listeners: list[Callable[[], None]] = []
         # Counts scene reports from the lamp, to tell whether one arrived while
         # a command ran (the lamp notifies before it answers the command).
@@ -588,19 +594,34 @@ class LukeRobertsLamp:
         return self.ble
 
     async def read_scene_records(self) -> tuple[int, dict[int, protocol.SceneRecord]]:
-        """Read every scene slot with the Sync command. BLE only.
+        """Bring the scene cache up to date and return revision and records.
 
-        Returns the lamp's revision and the records by scene id.
+        Like the Luke Roberts app, only the scenes changed since the cached
+        revision are asked for (a check with nothing changed takes about
+        0.2 s). Without a usable cache all slots are read; through a
+        Bluetooth proxy that drops notifications this takes several attempts,
+        and every attempt adds the records that arrived intact. A damaged
+        stream is never taken over. BLE only.
         """
         ble = self._scene_ble()
+        if self.scene_backups is None:
+            raise HomeAssistantError(f"{self.name}: no storage for scene backups")
         try:
-            done, records = await ble.sync_scenes()
+            cache = await self.scene_backups.cache()
+            if cache is not None:
+                updated = await self._sync_changes(ble, cache)
+                if updated is not None:
+                    cache = updated
+                else:
+                    cache = await self._sync_all(ble)
+            else:
+                cache = await self._sync_all(ble)
         except protocol.LampForbiddenError as err:
             raise HomeAssistantError(
                 f"{self.name}: the lamp has a security code set and rejects "
                 "local commands"
             ) from err
-        except (protocol.LampError, protocol.SceneRecordError) as err:
+        except protocol.LampError as err:
             raise HomeAssistantError(
                 f"{self.name}: reading the scene records failed ({err})"
             ) from err
@@ -608,11 +629,79 @@ class LukeRobertsLamp:
             raise HomeAssistantError(
                 f"{self.name}: lamp not reachable over Bluetooth ({err})"
             ) from err
+        await self.scene_backups.set_cache(cache)
         self.state.last_route = ROUTE_BLUETOOTH
-        return done.revision, {record.scene_id: record for record in records}
+        return cache.revision, dict(cache.records)
+
+    async def _sync_changes(
+        self, ble: LukeRobertsBle, cache: SceneCache
+    ) -> SceneCache | None:
+        """Apply the scenes changed since the cache; None if a full read is needed."""
+        for attempt in range(1, SYNC_CHANGES_ATTEMPTS + 1):
+            done, stream = await ble.sync_scenes(
+                cache.revision, cache.database, SYNC_CHANGES_TIMEOUT
+            )
+            if done is None:
+                continue
+            if done.database != cache.database or done.revision < cache.revision:
+                _LOGGER.debug("%s: scene database changed, reading all", self.name)
+                return None
+            try:
+                records = protocol.parse_scene_records(stream)
+            except protocol.SceneRecordError:
+                records = None
+            if records is None or len(records) != done.records:
+                _LOGGER.debug(
+                    "%s: scene changes incomplete (attempt %d, %d bytes)",
+                    self.name,
+                    attempt,
+                    len(stream),
+                )
+                continue
+            merged = dict(cache.records)
+            merged.update({record.scene_id: record for record in records})
+            return SceneCache(done.revision, done.database, merged)
+        raise HomeAssistantError(
+            f"{self.name}: the scene changes did not arrive complete after "
+            f"{SYNC_CHANGES_ATTEMPTS} attempts (weak Bluetooth link?); try again"
+        )
+
+    async def _sync_all(self, ble: LukeRobertsBle) -> SceneCache:
+        """Read all scene slots, collecting intact records over several attempts."""
+        collected: dict[int, protocol.SceneRecord] = {}
+        last: protocol.SyncDone | None = None
+        for attempt in range(1, SYNC_ALL_ATTEMPTS + 1):
+            done, stream = await ble.sync_scenes(0, bytes(4))
+            if done is None:
+                continue
+            if last is not None and (
+                done.revision != last.revision or done.records != last.records
+            ):
+                collected = {}  # the scenes changed meanwhile, start over
+            last = done
+            collected.update(protocol.recover_scene_records(stream, done.records))
+            _LOGGER.debug(
+                "%s: full scene read attempt %d: %d of %d slots",
+                self.name,
+                attempt,
+                len(collected),
+                done.records,
+            )
+            if len(collected) == done.records:
+                return SceneCache(done.revision, done.database, collected)
+        have = len(collected)
+        total = last.records if last is not None else "?"
+        raise HomeAssistantError(
+            f"{self.name}: only {have} of {total} scenes arrived complete after "
+            f"{SYNC_ALL_ATTEMPTS} attempts (weak Bluetooth link?); try again"
+        )
 
     async def backup_scenes(self, reason: str = "manual") -> SceneBackup:
         """Read all scene records and keep them as a backup."""
+        async with self._scene_lock:
+            return await self._backup_scenes(reason)
+
+    async def _backup_scenes(self, reason: str) -> SceneBackup:
         if self.scene_backups is None:
             raise HomeAssistantError(f"{self.name}: no storage for scene backups")
         revision, records = await self.read_scene_records()
@@ -628,7 +717,11 @@ class LukeRobertsLamp:
             protocol.encode_scene_name(name)
         except protocol.SceneRecordError as err:
             raise ServiceValidationError(f"{self.name}: {err}") from err
-        backup = await self.backup_scenes(f"before renaming scene {scene_id}")
+        async with self._scene_lock:
+            await self._rename_scene(scene_id, name)
+
+    async def _rename_scene(self, scene_id: int, name: str) -> None:
+        backup = await self._backup_scenes(f"before renaming scene {scene_id}")
         record = backup.records.get(scene_id)
         if record is None or record.is_empty:
             raise ServiceValidationError(f"{self.name}: there is no scene {scene_id}")
@@ -649,6 +742,10 @@ class LukeRobertsLamp:
         Backups made by a restore itself are skipped, so restoring twice
         does not undo the first restore. Returns the backup used.
         """
+        async with self._scene_lock:
+            return await self._restore_scene(scene_id)
+
+    async def _restore_scene(self, scene_id: int) -> SceneBackup:
         if self.scene_backups is None:
             raise HomeAssistantError(f"{self.name}: no storage for scene backups")
         revision, records = await self.read_scene_records()
@@ -700,7 +797,13 @@ class LukeRobertsLamp:
             answer.scene_id,
             answer.revision,
         )
-        _, records = await self.read_scene_records()
+        try:
+            _, records = await self.read_scene_records()
+        except HomeAssistantError as err:
+            raise HomeAssistantError(
+                f"{self.name}: scene {record.scene_id} was written (the lamp "
+                f"confirmed it) but could not be read back to check it: {err}"
+            ) from err
         stored = records.get(record.scene_id)
         if (
             answer.scene_id != record.scene_id
