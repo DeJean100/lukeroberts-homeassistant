@@ -4,6 +4,11 @@
 
 # Luke Roberts for Home Assistant
 
+> [!NOTE]
+> This is a fork of [3DJupp/lukeroberts-homeassistant](https://github.com/3DJupp/lukeroberts-homeassistant)
+> with changes that are not merged upstream yet (reading the lamp state, the
+> active scene, a power switch option). See the [changelog](CHANGELOG.md).
+
 > Home Assistant integration for **Luke Roberts Model F and Luvo** smart lamps.
 > Local control over Bluetooth through the adapters, ESPHome and Shelly
 > Bluetooth proxies you already have, with scenes, brightness, colour

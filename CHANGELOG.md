@@ -1,6 +1,10 @@
 # Changelog
 
-## Unreleased
+## 0.3.0-dejean.1 (2026-11-18, fork DeJean100)
+
+Fork release with PR #16, PR #17 and the power switch option, which are
+not merged upstream yet. Same domain as the original, so it replaces it.
+
 
 - **Power switch option.** A lamp on a switched circuit (KNX or Shelly
   actuator, smart plug, relay) can name that light or switch entity as

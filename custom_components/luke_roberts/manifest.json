@@ -22,15 +22,15 @@
   "dependencies": [
     "bluetooth_adapters"
   ],
-  "documentation": "https://github.com/3DJupp/lukeroberts-homeassistant",
+  "documentation": "https://github.com/DeJean100/lukeroberts-homeassistant",
   "integration_type": "device",
   "iot_class": "assumed_state",
-  "issue_tracker": "https://github.com/3DJupp/lukeroberts-homeassistant/issues",
+  "issue_tracker": "https://github.com/DeJean100/lukeroberts-homeassistant/issues",
   "loggers": [
     "custom_components.luke_roberts"
   ],
   "requirements": [
     "bleak-retry-connector>=3.5.0"
   ],
-  "version": "0.2.6"
+  "version": "0.3.0-dejean.1"
 }
