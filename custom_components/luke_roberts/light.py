@@ -21,7 +21,7 @@ from homeassistant.helpers.restore_state import RestoreEntity
 from homeassistant.util.color import brightness_to_value, value_to_brightness
 import voluptuous as vol
 
-from . import LukeRobertsConfigEntry
+from . import LukeRobertsConfigEntry, protocol
 from .const import (
     MAX_KELVIN,
     MIN_KELVIN,
@@ -29,6 +29,7 @@ from .const import (
     SERVICE_BACKUP_SCENES,
     SERVICE_DELETE_SCENE,
     SERVICE_DUPLICATE_SCENE,
+    SERVICE_EDIT_SCENE,
     SERVICE_IMMEDIATE_LIGHT,
     SERVICE_RENAME_SCENE,
     SERVICE_RESTORE_SCENE,
@@ -106,6 +107,18 @@ async def async_setup_entry(
     )
     platform.async_register_entity_service(
         SERVICE_DELETE_SCENE, SCENE_SCHEMA, "async_delete_scene"
+    )
+    platform.async_register_entity_service(
+        SERVICE_EDIT_SCENE,
+        {
+            **SCENE_SCHEMA,
+            **{
+                key: value
+                for key, value in IMMEDIATE_LIGHT_SCHEMA.items()
+                if str(key) != ATTR_DURATION
+            },
+        },
+        "async_edit_scene",
     )
     platform.async_register_entity_service(
         SERVICE_DUPLICATE_SCENE,
@@ -294,3 +307,24 @@ class LukeRobertsLight(LukeRobertsEntity, LightEntity, RestoreEntity):
     async def async_delete_scene(self, **kwargs: Any) -> None:
         """Delete a scene created by Home Assistant (a backup is made first)."""
         await self._lamp.delete_scene(self._scene_id(kwargs[ATTR_SCENE]))
+
+    async def async_edit_scene(self, **kwargs: Any) -> None:
+        """Change colours and brightness of a static scene (backup first)."""
+        if ATTR_UPLIGHT_HS_COLOR in kwargs and ATTR_UPLIGHT_KELVIN in kwargs:
+            raise ServiceValidationError(
+                "Give either uplight_hs_color or uplight_kelvin, not both"
+            )
+        color: tuple[int, int] | None = None
+        if ATTR_UPLIGHT_HS_COLOR in kwargs:
+            color = protocol.uplight_hs(*kwargs[ATTR_UPLIGHT_HS_COLOR])
+        elif ATTR_UPLIGHT_KELVIN in kwargs:
+            color = protocol.uplight_white(kwargs[ATTR_UPLIGHT_KELVIN])
+        changes = {
+            "kelvin": kwargs.get(ATTR_DOWNLIGHT_KELVIN),
+            "uplight_color": color,
+            "uplight_brightness": kwargs.get(ATTR_UPLIGHT_BRIGHTNESS),
+            "downlight_brightness": kwargs.get(ATTR_DOWNLIGHT_BRIGHTNESS),
+        }
+        if all(value is None for value in changes.values()):
+            raise ServiceValidationError("Nothing to change")
+        await self._lamp.edit_scene(self._scene_id(kwargs[ATTR_SCENE]), **changes)

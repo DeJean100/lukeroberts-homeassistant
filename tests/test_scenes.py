@@ -613,3 +613,90 @@ async def test_delete_only_own_scenes(hass: HomeAssistant) -> None:
         with pytest.raises(ServiceValidationError):
             await lamp.delete_scene(new_id)
         await lamp.ble.disconnect()
+
+
+def test_static_scene_round_trip() -> None:
+    """Decoding and encoding a real record gives the same bytes."""
+    stream = bytes.fromhex(FIXTURE.read_text().replace("\n", ""))
+    for record in protocol.parse_scene_records(stream):
+        if record.scene_type == protocol.SceneType.STATIC:
+            light = protocol.StaticScene.from_record(record)
+            assert light.apply(record) == record
+            assert len(light.uplight) == 16
+            assert len(light.spots) == 84
+
+
+def test_scale_levels_keeps_the_pattern() -> None:
+    """The brightest gets the percentage, the rest follows."""
+    assert protocol.scale_levels([0, 51, 102], 100) == [0, 128, 255]
+    assert protocol.scale_levels([0, 0], 50) == [128, 128]
+    assert protocol.scale_levels([10, 20], 0) == [0, 0]
+
+
+async def test_edit_scene(hass: HomeAssistant) -> None:
+    """Only the asked values change; backup first; name and header kept."""
+    client = FakeLampClient()
+    source = client.records[1]
+    with patch(
+        "custom_components.luke_roberts.ble.establish_connection",
+        AsyncMock(return_value=client),
+    ):
+        lamp = await _lamp(hass, client)
+        await lamp.edit_scene(
+            1,
+            kelvin=3500,
+            uplight_color=protocol.uplight_hs(240, 100),
+            downlight_brightness=50,
+        )
+        edited = protocol.SceneRecord(client.records[1])
+        light = protocol.StaticScene.from_record(edited)
+        assert light.kelvin == 3500
+        assert {segment[:2] for segment in light.uplight} == {(255, 43690)}
+        before = protocol.StaticScene.from_record(protocol.SceneRecord(source))
+        assert [s[2] for s in light.uplight] == [s[2] for s in before.uplight]
+        assert max(light.spots) == 128
+        assert edited.raw[:8] == source[:8]
+        assert edited.name == "Lesen"
+        assert (await lamp.scene_backups.latest()).reason == "before editing scene 1"
+
+        # Nothing changes: nothing is written.
+        writes = len(client.record_writes)
+        await lamp.edit_scene(1, kelvin=3500)
+        assert len(client.record_writes) == writes
+        with pytest.raises(ServiceValidationError):
+            await lamp.edit_scene(3, kelvin=3000)  # dynamic
+        await lamp.ble.disconnect()
+
+
+async def test_edit_action(hass: HomeAssistant) -> None:
+    """edit_scene action with a white uplight; empty calls are refused."""
+    client = FakeLampClient()
+    await _setup_ble(hass, client)
+    with patch(
+        "custom_components.luke_roberts.ble.establish_connection",
+        AsyncMock(return_value=client),
+    ):
+        await hass.services.async_call(
+            DOMAIN,
+            "edit_scene",
+            {
+                ATTR_ENTITY_ID: LIGHT,
+                "scene": "Gemütlich",
+                "uplight_kelvin": 3000,
+                "uplight_brightness": 20,
+            },
+            blocking=True,
+        )
+        light = protocol.StaticScene.from_record(
+            protocol.SceneRecord(client.records[2])
+        )
+        assert {segment[:2] for segment in light.uplight} == {(0, 3000)}
+        assert max(segment[2] for segment in light.uplight) == 51
+        for data in ({}, {"uplight_kelvin": 3000, "uplight_hs_color": [0, 50]}):
+            with pytest.raises(ServiceValidationError):
+                await hass.services.async_call(
+                    DOMAIN,
+                    "edit_scene",
+                    {ATTR_ENTITY_ID: LIGHT, "scene": "Lesen", **data},
+                    blocking=True,
+                )

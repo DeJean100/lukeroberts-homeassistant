@@ -227,6 +227,36 @@
           "description": "Name oder ID der Szene."
         }
       }
+    },
+    "edit_scene": {
+      "name": "Szene bearbeiten",
+      "description": "Ändert Farben und Helligkeit einer statischen Szene der Lampe (nur Bluetooth). Nur die angegebenen Werte ändern sich; die Helligkeit skaliert das Muster der Szene, sodass der hellste Teil den Wert bekommt. Vorher werden alle Szenen gesichert.",
+      "fields": {
+        "scene": {
+          "name": "Szene",
+          "description": "Name oder ID der Szene."
+        },
+        "uplight_hs_color": {
+          "name": "Uplight Farbton/Sättigung",
+          "description": "[Farbton 0-360, Sättigung 0-100] für alle Uplight Segmente."
+        },
+        "uplight_kelvin": {
+          "name": "Uplight Farbtemperatur",
+          "description": "Weißes Uplight statt einer Farbe."
+        },
+        "uplight_brightness": {
+          "name": "Uplight Helligkeit",
+          "description": "Helligkeit des hellsten Uplight Segments."
+        },
+        "downlight_kelvin": {
+          "name": "Downlight Farbtemperatur",
+          "description": "Farbtemperatur des direkten Lichts."
+        },
+        "downlight_brightness": {
+          "name": "Downlight Helligkeit",
+          "description": "Helligkeit des hellsten Downlight Spots."
+        }
+      }
     }
   },
   "exceptions": {

@@ -593,3 +593,91 @@ def merge_damaged_records(scene_id: int, copies: list[bytes]) -> SceneRecord | N
             ):
                 return SceneRecord(raw)
     return None
+
+
+# --- Static scene contents ------------------------------------------------------
+
+UPLIGHT_SEGMENTS = 16
+DOWNLIGHT_SPOTS = 84
+MIN_SCENE_KELVIN = 2700
+MAX_SCENE_KELVIN = 4000
+
+
+@dataclass(slots=True)
+class StaticScene:
+    """The light of a static scene record.
+
+    ``uplight`` holds 16 segments of ``(saturation, value, brightness)``:
+    with saturation > 0 the value is the hue (0..65535), with saturation 0 it
+    is a colour temperature in Kelvin. ``spots`` holds the 84 downlight
+    spot brightnesses (0..255) at ``kelvin``.
+    """
+
+    kelvin: int
+    uplight: list[tuple[int, int, int]]
+    spots: list[int]
+
+    @classmethod
+    def from_record(cls, record: SceneRecord) -> StaticScene:
+        """Decode a static scene record."""
+        if record.scene_type != SceneType.STATIC:
+            raise SceneRecordError("not a static scene")
+        raw = record.raw
+        kelvin = struct.unpack_from("<H", raw, SCENE_HEADER_LENGTH)[0]
+        base = SCENE_HEADER_LENGTH + 2
+        uplight = [
+            (
+                raw[base + 4 * i],
+                struct.unpack_from("<H", raw, base + 4 * i + 1)[0],
+                raw[base + 4 * i + 3],
+            )
+            for i in range(UPLIGHT_SEGMENTS)
+        ]
+        start = base + 4 * UPLIGHT_SEGMENTS
+        spots = list(raw[start : start + DOWNLIGHT_SPOTS])
+        return cls(kelvin, uplight, spots)
+
+    def apply(self, record: SceneRecord) -> SceneRecord:
+        """The record with this light, keeping header and name."""
+        if record.scene_type != SceneType.STATIC:
+            raise SceneRecordError("not a static scene")
+        body = struct.pack(
+            "<H", _clamp(self.kelvin, MIN_SCENE_KELVIN, MAX_SCENE_KELVIN)
+        )
+        for saturation, value, brightness in self.uplight:
+            body += struct.pack(
+                "<BHB",
+                _clamp(saturation, 0, 255),
+                _clamp(value, 0, 0xFFFF),
+                _clamp(brightness, 0, 255),
+            )
+        body += bytes(_clamp(spot, 0, 255) for spot in self.spots)
+        raw = record.raw
+        return SceneRecord(raw[:SCENE_HEADER_LENGTH] + body + raw[-SCENE_NAME_LENGTH:])
+
+
+def scale_levels(levels: list[int], percent: int) -> list[int]:
+    """Scale brightness levels so the brightest becomes ``percent`` of full.
+
+    The pattern (relative brightness of spots or segments) is kept. If all
+    levels are 0, they all become ``percent``.
+    """
+    target = round(_clamp(percent, 0, 100) * 255 / 100)
+    peak = max(levels, default=0)
+    if peak == 0:
+        return [target] * len(levels)
+    return [round(level * target / peak) for level in levels]
+
+
+def uplight_hs(hue: float, saturation: float) -> tuple[int, int]:
+    """Record form of a colour: hue 0..360 and saturation 0..100 percent.
+
+    Saturation 0 would mean "white, the value is Kelvin", so a colour keeps
+    at least 1 (the app does the same).
+    """
+    return max(1, round(saturation * 255 / 100)), round(hue * 65535 / 360) & 0xFFFF
+
+
+def uplight_white(kelvin: int) -> tuple[int, int]:
+    """Record form of a white uplight at ``kelvin``."""
+    return 0, _clamp(kelvin, MIN_SCENE_KELVIN, MAX_SCENE_KELVIN)
