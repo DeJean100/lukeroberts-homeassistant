@@ -60,6 +60,7 @@ from .const import (
     MODE_LOCAL_ONLY,
     SERVICE_UUID,
 )
+from .scene_flow import SceneOptionsMixin
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -327,8 +328,8 @@ class LukeRobertsConfigFlow(ConfigFlow, domain=DOMAIN):
         )
 
 
-class LukeRobertsOptionsFlow(OptionsFlow):
-    """Connection mode, keepalive and optional cloud link."""
+class LukeRobertsOptionsFlow(SceneOptionsMixin, OptionsFlow):
+    """Connection mode, keepalive and optional cloud link; scene management."""
 
     def __init__(self) -> None:
         self._options: dict[str, Any] = {}
@@ -340,6 +341,22 @@ class LukeRobertsOptionsFlow(OptionsFlow):
 
     async def async_step_init(
         self, user_input: dict[str, Any] | None = None
+    ) -> ConfigFlowResult:
+        """Menu (connection or scenes) for a loaded Bluetooth lamp, else the form."""
+        if user_input is None and self._scene_lamp is not None:
+            return self.async_show_menu(
+                step_id="init", menu_options=["connection", "scenes"]
+            )
+        return await self._connection_form(user_input, "init")
+
+    async def async_step_connection(
+        self, user_input: dict[str, Any] | None = None
+    ) -> ConfigFlowResult:
+        """Connection options."""
+        return await self._connection_form(user_input, "connection")
+
+    async def _connection_form(
+        self, user_input: dict[str, Any] | None, step_id: str
     ) -> ConfigFlowResult:
         """Main options form."""
         has_ble = CONF_ADDRESS in self.config_entry.data
@@ -429,7 +446,7 @@ class LukeRobertsOptionsFlow(OptionsFlow):
                 )
             ] = EntitySelector(EntitySelectorConfig(domain=["light", "switch"]))
         return self.async_show_form(
-            step_id="init",
+            step_id=step_id,
             data_schema=vol.Schema(schema),
             errors=errors,
             description_placeholders=CLOUD_PLACEHOLDERS,

@@ -1,5 +1,16 @@
 # Changelog
 
+## Unreleased
+
+- **`luke_roberts.edit_scene`**: change the downlight colour temperature and
+  brightness, the uplight colour (or white) and the uplight brightness of a
+  static scene. Brightness keeps the scene's pattern. Backup first, read
+  back afterwards; nothing is written if nothing changes.
+- **Manage scenes in the Configure dialog**: a menu (Connection / Manage
+  scenes) for lamps set up over Bluetooth. Pick a scene, then edit (colour
+  picker, sliders), rename, duplicate, restore or delete one Home Assistant
+  created. No YAML needed.
+
 ## 0.3.0-dejean.4 (2026-11-19, fork DeJean100)
 
 - **Scene preview, new look.** The uplight (indirect light) is drawn as a soft

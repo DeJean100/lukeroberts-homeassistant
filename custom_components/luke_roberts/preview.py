@@ -44,7 +44,7 @@ def kelvin_to_rgb(kelvin: int) -> tuple[int, int, int]:
     return tuple(max(0, min(255, round(v))) for v in (red, green, blue))  # type: ignore[return-value]
 
 
-def _uplight_rgb(saturation: int, value: int) -> tuple[int, int, int]:
+def uplight_rgb(saturation: int, value: int) -> tuple[int, int, int]:
     if saturation == 0:
         return kelvin_to_rgb(value)  # white uplight: the value is Kelvin
     red, green, blue = colorsys.hsv_to_rgb(value / 65535, saturation / 255, 1.0)
@@ -128,7 +128,7 @@ def scene_svg(record: SceneRecord) -> bytes:
     blobs: list[str] = []
     for segment in range(UPLIGHT_SEGMENTS):
         offset = _UPLIGHT_OFFSET + 4 * segment
-        red, green, blue = _uplight_rgb(
+        red, green, blue = uplight_rgb(
             raw[offset], struct.unpack_from("<H", raw, offset + 1)[0]
         )
         angle = _angle(segment + 0.5, UPLIGHT_SEGMENTS)

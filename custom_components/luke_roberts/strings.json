@@ -52,6 +52,33 @@
   "options": {
     "step": {
       "init": {
+        "title": "Options",
+        "description": "Bluetooth is local and fast. With the Luke Roberts account (or an API key just for this lamp) the lamp stays reachable when no adapter or proxy is in range.",
+        "data": {
+          "connection_mode": "Connection mode",
+          "linger": "Keep Bluetooth connection after the last command",
+          "api_key": "Cloud API key (optional)",
+          "firmware_key": "Firmware check key (optional)",
+          "power_entity": "Power switch (optional)"
+        },
+        "data_description": {
+          "linger": "While connected the Luke Roberts app shows the lamp as in use. 0 disconnects right after each command.",
+          "api_key": "Only needed when this lamp should use a different key than the Luke Roberts account. Personal API keys are created at {cloud_url}.",
+          "firmware_key": "Api-Key for the Luke Roberts firmware server. With it the firmware entity shows whether a newer version is available.",
+          "power_entity": "A light or switch that switches the lamp's power, for example a KNX actuator or a smart plug. On/off then switches the power; brightness, colour temperature and scenes still go over Bluetooth. Leave empty to switch the lamp off with its Off scene."
+        },
+        "menu_options": {
+          "connection": "Connection",
+          "scenes": "Manage scenes"
+        }
+      },
+      "cloud_lamp": {
+        "title": "Link cloud lamp",
+        "data": {
+          "cloud_lamp_id": "Lamp"
+        }
+      },
+      "connection": {
         "title": "Connection",
         "description": "Bluetooth is local and fast. With the Luke Roberts account (or an API key just for this lamp) the lamp stays reachable when no adapter or proxy is in range.",
         "data": {
@@ -68,18 +95,87 @@
           "power_entity": "A light or switch that switches the lamp's power, for example a KNX actuator or a smart plug. On/off then switches the power; brightness, colour temperature and scenes still go over Bluetooth. Leave empty to switch the lamp off with its Off scene."
         }
       },
-      "cloud_lamp": {
-        "title": "Link cloud lamp",
+      "scenes": {
+        "title": "Manage scenes",
+        "description": "The scenes stored in the lamp are read once and kept in Home Assistant. Through a Bluetooth proxy this can take up to a minute."
+      },
+      "scene_pick": {
+        "title": "Manage scenes",
+        "description": "Choose a scene stored in the lamp. Off and animated scenes cannot be changed.",
         "data": {
-          "cloud_lamp_id": "Lamp"
+          "scene": "Scene"
         }
+      },
+      "scene_action": {
+        "title": "{scene}",
+        "menu_options": {
+          "scene_edit": "Edit colours and brightness",
+          "scene_rename": "Rename",
+          "scene_duplicate": "Duplicate",
+          "scene_restore": "Restore from a backup",
+          "scene_delete": "Delete"
+        }
+      },
+      "scene_rename": {
+        "title": "Rename scene",
+        "description": "A backup of all scenes is made first.",
+        "data": {
+          "name": "New name"
+        },
+        "data_description": {
+          "name": "At most 20 bytes; letters like é count twice."
+        }
+      },
+      "scene_duplicate": {
+        "title": "Duplicate scene",
+        "description": "The copy goes to a free slot and the lamp switches to it, as in the app.",
+        "data": {
+          "name": "Name of the copy"
+        }
+      },
+      "scene_edit": {
+        "title": "Edit {scene}",
+        "description": "Only what you change is applied; the scene's pattern is kept. A backup of all scenes is made first.",
+        "data": {
+          "uplight_white": "White uplight",
+          "uplight_color": "Uplight colour",
+          "uplight_kelvin": "Uplight colour temperature",
+          "uplight_brightness": "Uplight brightness",
+          "downlight_kelvin": "Downlight colour temperature",
+          "downlight_brightness": "Downlight brightness"
+        },
+        "data_description": {
+          "uplight_white": "On: the uplight uses the colour temperature below instead of a colour.",
+          "uplight_color": "Applied to all 16 uplight segments.",
+          "uplight_brightness": "Brightness of the brightest segment; the others follow.",
+          "downlight_brightness": "Brightness of the brightest spot; the others follow."
+        }
+      },
+      "scene_restore": {
+        "title": "Restore {scene}",
+        "description": "Write {scene} back as it was in the newest backup that differs from the lamp."
+      },
+      "scene_delete": {
+        "title": "Delete {scene}",
+        "description": "Delete {scene} from the lamp? Home Assistant created this scene. A backup of all scenes is made first."
       }
     },
     "error": {
       "api_key_required": "This connection mode needs a cloud API key.",
       "invalid_auth": "The API key was rejected.",
       "cannot_connect": "Could not reach the Luke Roberts cloud.",
-      "no_lamps": "No lamps were found in this account."
+      "no_lamps": "No lamps were found in this account.",
+      "invalid_scene_name": "The name is empty or longer than 20 bytes."
+    },
+    "abort": {
+      "scenes_need_bluetooth": "Scenes can only be managed over Bluetooth while the lamp is set up.",
+      "no_static_scenes": "The lamp has no scene that can be changed.",
+      "scene_saved": "{scene} was saved in the lamp.",
+      "scene_created": "{scene} was created in the lamp.",
+      "scene_deleted": "{scene} was deleted from the lamp.",
+      "scene_restored": "{scene} was restored from the backup of {time}.",
+      "scene_unchanged": "Nothing was changed in {scene}.",
+      "scene_failed": "The lamp was not changed: {error}"
     }
   },
   "selector": {

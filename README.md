@@ -245,6 +245,16 @@ checked with a Bluetooth capture of the app and on a Model F with firmware
   with `duplicate_scene`. Scenes made in the app are never deleted from Home
   Assistant.
 
+- `luke_roberts.edit_scene` changes the colours and brightness of a static
+  scene: downlight colour temperature and brightness, uplight colour
+  (`uplight_hs_color` or `uplight_kelvin` for white) and uplight brightness.
+  Only the given values change; brightness scales the scene's pattern so
+  its brightest spot or segment gets the value.
+
+**Without YAML:** the lamp's **Configure** dialog has a *Manage scenes*
+menu: pick a scene, then edit colours and brightness, rename, duplicate,
+restore it from a backup, or delete a scene Home Assistant created.
+
 The scenes are read like the app does: a copy is kept in Home Assistant and
 only the scenes changed since then are asked for. The first read can take
 up to a minute through a Bluetooth proxy; after that it takes a moment.
