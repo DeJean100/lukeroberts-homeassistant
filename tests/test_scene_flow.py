@@ -153,3 +153,25 @@ async def test_failure_is_reported(hass: HomeAssistant, client) -> None:
     assert result["reason"] == "scene_failed"
     assert "did not arrive complete" in result["description_placeholders"]["error"]
     assert client.record_writes == []
+
+
+async def test_menu_while_the_lamp_is_away(hass: HomeAssistant, client) -> None:
+    """Scenes can be browsed from the copy; a change says the lamp is away."""
+    entry = await _setup_ble(hass, client)
+    result = await _open(hass, entry.entry_id)  # reads the scenes once
+    flow = hass.config_entries.options
+    flow.async_abort(result["flow_id"])
+    lamp = entry.runtime_data
+    lamp.ble = None  # not seen since startup (e.g. power off)
+
+    result = await flow.async_init(entry.entry_id)
+    assert result["menu_options"] == ["connection", "scenes"]
+    result = await flow.async_configure(result["flow_id"], {"next_step_id": "scenes"})
+    assert result["step_id"] == "scene_pick"  # from the stored copy
+    result = await flow.async_configure(result["flow_id"], {"scene": "1"})
+    result = await flow.async_configure(
+        result["flow_id"], {"next_step_id": "scene_rename"}
+    )
+    result = await flow.async_configure(result["flow_id"], {"name": "Neu"})
+    assert result["reason"] == "scene_failed"
+    assert "not reachable" in result["description_placeholders"]["error"]

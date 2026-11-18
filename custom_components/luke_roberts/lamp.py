@@ -588,11 +588,16 @@ class LukeRobertsLamp:
     # --- Scene records (not in the Lamp Control API) ---------------------------
 
     def _scene_ble(self) -> LukeRobertsBle:
-        if not self.has_local or self.ble is None:
+        self._require_power()
+        if self.mode == MODE_CLOUD_ONLY:
             raise HomeAssistantError(
                 f"{self.name}: scenes can only be read and changed over Bluetooth"
             )
-        self._require_power()
+        if self.ble is None:
+            raise HomeAssistantError(
+                f"{self.name}: the lamp is not reachable over Bluetooth right now "
+                "(no power, out of range, or connected to the app)"
+            )
         return self.ble
 
     async def read_scene_records(self) -> tuple[int, dict[int, protocol.SceneRecord]]:

@@ -12,6 +12,7 @@ from __future__ import annotations
 from typing import TYPE_CHECKING, Any
 
 from homeassistant.config_entries import ConfigFlowResult, OptionsFlow
+from homeassistant.const import CONF_ADDRESS
 from homeassistant.exceptions import HomeAssistantError
 from homeassistant.helpers.selector import (
     BooleanSelector,
@@ -31,6 +32,7 @@ from homeassistant.util.color import color_RGB_to_hs
 import voluptuous as vol
 
 from . import protocol
+from .const import MODE_CLOUD_ONLY
 from .preview import uplight_rgb
 
 if TYPE_CHECKING:
@@ -76,8 +78,14 @@ class SceneOptionsMixin(OptionsFlow):
 
     @property
     def _scene_lamp(self) -> LukeRobertsLamp | None:
+        """The lamp, if it is set up for Bluetooth (reachable or not right now)."""
         lamp = getattr(self.config_entry, "runtime_data", None)
-        if lamp is None or not lamp.has_local or lamp.scene_backups is None:
+        if (
+            lamp is None
+            or CONF_ADDRESS not in self.config_entry.data
+            or lamp.mode == MODE_CLOUD_ONLY
+            or lamp.scene_backups is None
+        ):
             return None
         return lamp
 
