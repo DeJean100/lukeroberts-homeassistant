@@ -226,6 +226,7 @@ class LukeRobertsBle:
         stream = bytearray()
 
         def on_record(_sender: object, data: bytearray) -> None:
+            _LOGGER.debug("%s: <- 2843 %s", self._name, bytes(data).hex(" "))
             stream.extend(data)
 
         def on_settings(_sender: object, data: bytearray) -> None:
@@ -239,7 +240,11 @@ class LukeRobertsBle:
                 done = protocol.parse_sync_done(
                     await self._request_locked(protocol.sync(), timeout=SYNC_TIMEOUT)
                 )
-                records = protocol.parse_scene_records(bytes(stream))
+                try:
+                    records = protocol.parse_scene_records(bytes(stream))
+                except protocol.SceneRecordError:
+                    _LOGGER.debug("%s: scene stream %s", self._name, stream.hex())
+                    raise
             finally:
                 for uuid in (SCENE_RECORD_CHAR_UUID, SETTINGS_CHAR_UUID):
                     with contextlib.suppress(Exception):
