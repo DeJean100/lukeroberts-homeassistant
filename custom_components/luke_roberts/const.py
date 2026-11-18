@@ -13,8 +13,13 @@ API_CHAR_UUID: Final = "44092842-0567-11e6-b862-0002a5d5c51b"
 # Active scene id, one byte (read and notify). Not part of the Lamp Control API
 # v1.3 document; confirmed on a Model F with firmware 1.2.2.
 SCENE_CHAR_UUID: Final = "44092844-0567-11e6-b862-0002a5d5c51b"
-# Scene records, written like the Luke Roberts app 2.4.0 does. The lamp answers
-# on the API characteristic.
+# Scene records, read with the Sync command and written like the Luke Roberts
+# app 2.4.0 does. The lamp answers writes on the API characteristic. Not in the
+# Lamp Control API; verified on a Model F with firmware 1.2.2.
+SETTINGS_CHAR_UUID: Final = "44092841-0567-11e6-b862-0002a5d5c51b"
+SCENE_RECORD_CHAR_UUID: Final = "44092843-0567-11e6-b862-0002a5d5c51b"
+# How long a Sync may take: about 2 s for 20 scenes through a proxy.
+SYNC_TIMEOUT: Final = 15.0
 
 # Device Information Service (0x180A)
 DIS_MANUFACTURER_UUID: Final = "00002a29-0000-1000-8000-00805f9b34fb"
@@ -83,3 +88,6 @@ CLOUD_MAX_SCENE_ID: Final = 31
 # --- Services ----------------------------------------------------------------
 SERVICE_IMMEDIATE_LIGHT: Final = "immediate_light"
 SERVICE_REFRESH_SCENES: Final = "refresh_scenes"
+SERVICE_BACKUP_SCENES: Final = "backup_scenes"
+SERVICE_RENAME_SCENE: Final = "rename_scene"
+SERVICE_RESTORE_SCENE: Final = "restore_scene"

@@ -169,6 +169,35 @@
           "description": "Revert to the scene after this time (max 65 s). 0 keeps it."
         }
       }
+    },
+    "backup_scenes": {
+      "name": "Back up scenes",
+      "description": "Read every scene stored in the lamp (Bluetooth only) and keep a backup in Home Assistant. Returns the scene ids and names.",
+      "fields": {}
+    },
+    "rename_scene": {
+      "name": "Rename scene",
+      "description": "Give a scene stored in the lamp another name (Bluetooth only). Everything else stays the same, and a backup of all scenes is made first. Dynamic scenes and Off cannot be renamed.",
+      "fields": {
+        "scene": {
+          "name": "Scene",
+          "description": "Name or id of the scene."
+        },
+        "name": {
+          "name": "New name",
+          "description": "At most 20 bytes (UTF-8)."
+        }
+      }
+    },
+    "restore_scene": {
+      "name": "Restore scene",
+      "description": "Write a scene back as it was in the newest backup that differs from the lamp (Bluetooth only). A backup is made first.",
+      "fields": {
+        "scene": {
+          "name": "Scene",
+          "description": "Name or id of the scene."
+        }
+      }
     }
   },
   "exceptions": {

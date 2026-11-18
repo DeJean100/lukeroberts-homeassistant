@@ -2,6 +2,17 @@
 
 ## Unreleased
 
+- **Scene backup, rename and restore.** New actions
+  `luke_roberts.backup_scenes`, `rename_scene` and `restore_scene` read and
+  write the lamp's scene records like the Luke Roberts app (Sync command and
+  scene record characteristic `…43`, little endian). Every write is preceded
+  by a backup of all scenes in Home Assistant's storage and checked by
+  reading the scene back. Off and dynamic scenes are never written. Verified
+  on a Model F (firmware 1.2.2): a rename changes only the name, leaves the
+  other scenes and the active scene alone, and a restore is byte for byte.
+
+## Unreleased
+
 - **Power switch option.** A lamp on a switched circuit (KNX or Shelly
   actuator, smart plug, relay) can name that light or switch entity as
   *Power switch* in its options. On/off then switches the power, the light's

@@ -49,6 +49,8 @@ account, the command is sent through the Luke Roberts cloud instead.
 - `luke_roberts.immediate_light` action for the transient Immediate Light
   command, including the **coloured uplight** (hue/saturation) and the
   downlight, with optional automatic revert
+- **Scene backup, rename and restore** (`luke_roberts.backup_scenes`,
+  `rename_scene`, `restore_scene`), Bluetooth only, see below
 - **Firmware entity** with the installed version and, with a firmware check
   key, the newest version from the Luke Roberts firmware server
 - **Connection modes**: Bluetooth first with cloud fallback, Bluetooth only,
@@ -211,6 +213,32 @@ data:
   downlight_brightness: 40     # %
   duration:
     seconds: 10                # 0 = keep until the next scene change
+```
+
+### Scene backup, rename and restore
+
+Not part of the published Lamp Control API: the integration reads and writes
+the lamp's scene records the way the Luke Roberts app does. The format was
+checked with a Bluetooth capture of the app and on a Model F with firmware
+1.2.2 (see `docs/app-2.4.0-findings.md`).
+
+- `luke_roberts.backup_scenes` reads every scene stored in the lamp and keeps
+  a copy in Home Assistant (`.storage/luke_roberts.scene_backups.*`, the last
+  20). It returns the scene ids and names.
+- `luke_roberts.rename_scene` gives a scene another name (at most 20 bytes).
+  A backup of all scenes is made first, the scene is written back with only
+  the name changed, and the integration reads it back to check it. The Off
+  scene and dynamic scenes such as *Demo* cannot be renamed.
+- `luke_roberts.restore_scene` writes a scene back as it was in the newest
+  backup that differs from the lamp, e.g. to undo a rename.
+
+```yaml
+action: luke_roberts.rename_scene
+target:
+  entity_id: light.esstisch
+data:
+  scene: Candle Light   # name or id
+  name: Dinner
 ```
 
 ### Firmware

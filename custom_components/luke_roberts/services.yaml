@@ -37,3 +37,38 @@ immediate_light:
         seconds: 0
       selector:
         duration:
+
+backup_scenes:
+  target:
+    entity:
+      integration: luke_roberts
+      domain: light
+
+rename_scene:
+  target:
+    entity:
+      integration: luke_roberts
+      domain: light
+  fields:
+    scene:
+      required: true
+      example: "Candle Light"
+      selector:
+        text:
+    name:
+      required: true
+      example: "Dinner"
+      selector:
+        text:
+
+restore_scene:
+  target:
+    entity:
+      integration: luke_roberts
+      domain: light
+  fields:
+    scene:
+      required: true
+      example: "Candle Light"
+      selector:
+        text:

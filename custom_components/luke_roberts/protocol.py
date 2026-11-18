@@ -1,7 +1,8 @@
 """Frame builders and parsers for the Luke Roberts Lamp Control API v1.3.
 
 Pure Python, no Home Assistant or Bluetooth imports, so it can be unit tested
-on its own. All multi-byte numbers are big endian. Every command starts with
+on its own. All multi-byte numbers of the API are big endian (the state query
+and the scene records at the end are little endian). Every command starts with
 the prefix ``A0`` followed by the API version byte (``01`` or ``02``).
 """
 
@@ -267,3 +268,169 @@ def parse_state(response: bytes) -> LightState | None:
     if flag not in (0x00, 0x01) or level > 100:
         return None
     return LightState(is_on=flag == 0x01, brightness=level, kelvin=kelvin)
+
+
+# --- Scene records ------------------------------------------------------------
+#
+# Not part of the Lamp Control API v1.3. Verified on a Model F (firmware 1.2.2)
+# with a Bluetooth capture of the Luke Roberts app, see
+# docs/app-2.4.0-findings.md. Unlike the API, numbers are little endian.
+
+SYNC = 0x07
+SCENE_RECORD_VERSION = 0x01
+SCENE_NEW = 0xFE  # written as id of a new scene, the lamp assigns the real one
+SCENE_NAME_LENGTH = 20
+SCENE_HEADER_LENGTH = 8
+
+
+class SceneType(IntEnum):
+    """Record type byte (``wireType``) of a scene record."""
+
+    EMPTY = 0x00  # empty slot when read, delete when written
+    STATIC = 0x01  # kelvin, 16 uplight segments, 84 downlight spots, name
+    DYNAMIC = 0x02  # animation built into the firmware (e.g. "Demo")
+    NAME_ONLY = 0x03  # the Off scene
+
+
+SCENE_RECORD_LENGTH = {
+    SceneType.EMPTY: SCENE_HEADER_LENGTH,
+    SceneType.STATIC: 178,
+    SceneType.DYNAMIC: 108,
+    SceneType.NAME_ONLY: 28,
+}
+
+
+class SceneRecordError(ValueError):
+    """Scene records that cannot be parsed or changed."""
+
+
+@dataclass(frozen=True, slots=True)
+class SceneRecord:
+    """One scene slot as stored in the lamp, kept byte for byte."""
+
+    raw: bytes
+
+    @property
+    def scene_id(self) -> int:
+        """Id of the scene (0 = Off)."""
+        return self.raw[1]
+
+    @property
+    def sort_index(self) -> int:
+        """Position in the app's scene list."""
+        return self.raw[2]
+
+    @property
+    def scene_type(self) -> int:
+        """Record type, see ``SceneType``."""
+        return self.raw[3]
+
+    @property
+    def is_empty(self) -> bool:
+        """True for a free (or deleted) slot."""
+        return self.scene_type == SceneType.EMPTY
+
+    @property
+    def name(self) -> str:
+        """Scene name, empty for a free slot."""
+        if self.is_empty:
+            return ""
+        raw = self.raw[-SCENE_NAME_LENGTH:].split(b"\x00", 1)[0]
+        return raw.decode("utf-8", errors="replace")
+
+    def with_name(self, name: str) -> SceneRecord:
+        """The same record with another name; only static scenes."""
+        if self.scene_type != SceneType.STATIC:
+            raise SceneRecordError("only static scenes can be renamed")
+        return SceneRecord(self.raw[:-SCENE_NAME_LENGTH] + encode_scene_name(name))
+
+
+def encode_scene_name(name: str) -> bytes:
+    """Name field: UTF-8, at most 20 bytes, padded with zero bytes."""
+    name = name.strip()
+    if not name:
+        raise SceneRecordError("the name is empty")
+    raw = name.encode("utf-8")
+    if len(raw) > SCENE_NAME_LENGTH:
+        raise SceneRecordError(
+            f"the name is {len(raw)} bytes long, the lamp stores at most "
+            f"{SCENE_NAME_LENGTH}"
+        )
+    return raw.ljust(SCENE_NAME_LENGTH, b"\x00")
+
+
+def sync(revision: int = 0, database: bytes = bytes(4)) -> bytes:
+    """Sync: settings and every scene record changed after ``revision``.
+
+    With revision 0 the lamp sends all scene slots. It also accepts an
+    all-zero database id, so nothing has to be remembered between syncs.
+    """
+    return (
+        bytes([SYNC])
+        + struct.pack("<I", revision & 0xFFFFFFFF)
+        + database[:4].ljust(4, b"\x00")
+        + bytes([0x00, 0x01])
+    )
+
+
+@dataclass(frozen=True, slots=True)
+class SyncDone:
+    """Final answer to a Sync."""
+
+    revision: int
+    records: int  # number of scene records the lamp sent
+    selected: int  # active scene id
+    database: bytes
+
+
+def parse_sync_done(response: bytes) -> SyncDone:
+    """Parse ``00 RRRRRRRR 01 NN SS 9C 00 DDDDDDDD 00 00``."""
+    check_status(response)
+    if len(response) < 15:
+        raise LampError(Status.INVALID_PARAMETERS)
+    return SyncDone(
+        revision=struct.unpack_from("<I", response, 1)[0],
+        records=response[6],
+        selected=response[7],
+        database=bytes(response[10:14]),
+    )
+
+
+def parse_scene_records(stream: bytes) -> list[SceneRecord]:
+    """Split the concatenated scene notifications of a Sync into records."""
+    records: list[SceneRecord] = []
+    offset = 0
+    while offset < len(stream):
+        header = stream[offset : offset + SCENE_HEADER_LENGTH]
+        if len(header) < SCENE_HEADER_LENGTH or header[0] != SCENE_RECORD_VERSION:
+            raise SceneRecordError(f"no scene record at byte {offset}")
+        length = SCENE_RECORD_LENGTH.get(header[3])  # type: ignore[call-overload]
+        if length is None:
+            raise SceneRecordError(f"unknown scene record type 0x{header[3]:02X}")
+        raw = stream[offset : offset + length]
+        if len(raw) < length:
+            raise SceneRecordError("scene record cut off")
+        records.append(SceneRecord(bytes(raw)))
+        offset += length
+    return records
+
+
+@dataclass(frozen=True, slots=True)
+class SceneWrite:
+    """Answer of the lamp to a scene record write."""
+
+    revision: int
+    scene_id: int
+    sort_index: int
+
+
+def parse_scene_write(response: bytes) -> SceneWrite:
+    """Parse ``00 RRRRRRRR <scene id> <sort index>``."""
+    check_status(response)
+    if len(response) < 7:
+        raise LampError(Status.INVALID_PARAMETERS)
+    return SceneWrite(
+        revision=struct.unpack_from("<I", response, 1)[0],
+        scene_id=response[5],
+        sort_index=response[6],
+    )

@@ -169,6 +169,35 @@
           "description": "Nach dieser Zeit zur Szene zurückkehren (max. 65 s). 0 behält die Änderung."
         }
       }
+    },
+    "backup_scenes": {
+      "name": "Szenen sichern",
+      "description": "Liest alle in der Lampe gespeicherten Szenen (nur Bluetooth) und legt eine Sicherung in Home Assistant an. Gibt die Szenen-IDs und Namen zurück.",
+      "fields": {}
+    },
+    "rename_scene": {
+      "name": "Szene umbenennen",
+      "description": "Gibt einer in der Lampe gespeicherten Szene einen anderen Namen (nur Bluetooth). Alles andere bleibt gleich; vorher werden alle Szenen gesichert. Dynamische Szenen und Aus können nicht umbenannt werden.",
+      "fields": {
+        "scene": {
+          "name": "Szene",
+          "description": "Name oder ID der Szene."
+        },
+        "name": {
+          "name": "Neuer Name",
+          "description": "Höchstens 20 Bytes (UTF-8)."
+        }
+      }
+    },
+    "restore_scene": {
+      "name": "Szene wiederherstellen",
+      "description": "Schreibt eine Szene so zurück, wie sie in der neuesten abweichenden Sicherung war (nur Bluetooth). Vorher wird gesichert.",
+      "fields": {
+        "scene": {
+          "name": "Szene",
+          "description": "Name oder ID der Szene."
+        }
+      }
     }
   },
   "exceptions": {

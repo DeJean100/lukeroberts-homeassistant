@@ -36,6 +36,9 @@ from .const import (
     KEEPALIVE_INTERVAL,
     RESPONSE_TIMEOUT,
     SCENE_CHAR_UUID,
+    SCENE_RECORD_CHAR_UUID,
+    SETTINGS_CHAR_UUID,
+    SYNC_TIMEOUT,
 )
 
 _LOGGER = logging.getLogger(__name__)
@@ -196,17 +199,67 @@ class LukeRobertsBle:
         self._schedule_keepalive()
         return responses
 
-    async def _request_locked(self, frame: bytes) -> bytes:
+    async def _request_locked(
+        self,
+        frame: bytes,
+        char_uuid: str = API_CHAR_UUID,
+        timeout: float = RESPONSE_TIMEOUT,
+    ) -> bytes:
         client = await self._ensure_connected()
         loop = asyncio.get_running_loop()
         self._response = loop.create_future()
-        _LOGGER.debug("%s: -> %s", self._name, frame.hex(" "))
+        _LOGGER.debug("%s: -> %s %s", self._name, char_uuid[4:8], frame.hex(" "))
         try:
-            await client.write_gatt_char(API_CHAR_UUID, frame, response=True)
-            async with asyncio.timeout(RESPONSE_TIMEOUT):
+            await client.write_gatt_char(char_uuid, frame, response=True)
+            async with asyncio.timeout(timeout):
                 return await self._response
         finally:
             self._response = None
+
+    async def sync_scenes(self) -> tuple[protocol.SyncDone, list[protocol.SceneRecord]]:
+        """Read every scene record with the Sync command (from revision 0).
+
+        The lamp sends the settings record on its own characteristic, then
+        the scene records split into notifications on the scene record
+        characteristic, and finally the answer on the API characteristic.
+        """
+        stream = bytearray()
+
+        def on_record(_sender: object, data: bytearray) -> None:
+            stream.extend(data)
+
+        def on_settings(_sender: object, data: bytearray) -> None:
+            pass  # the settings record is not used (yet)
+
+        async with self._lock:
+            client = await self._ensure_connected()
+            await client.start_notify(SETTINGS_CHAR_UUID, on_settings)
+            await client.start_notify(SCENE_RECORD_CHAR_UUID, on_record)
+            try:
+                done = protocol.parse_sync_done(
+                    await self._request_locked(protocol.sync(), timeout=SYNC_TIMEOUT)
+                )
+                records = protocol.parse_scene_records(bytes(stream))
+            finally:
+                for uuid in (SCENE_RECORD_CHAR_UUID, SETTINGS_CHAR_UUID):
+                    with contextlib.suppress(Exception):
+                        await client.stop_notify(uuid)
+        self._last_command = time.monotonic()
+        self._schedule_keepalive()
+        if len(records) != done.records:
+            raise protocol.SceneRecordError(
+                f"the lamp announced {done.records} scene records, "
+                f"{len(records)} arrived"
+            )
+        return done, records
+
+    async def write_scene_record(self, record: bytes) -> protocol.SceneWrite:
+        """Write one scene record; the lamp answers on the API characteristic."""
+        async with self._lock:
+            response = await self._request_locked(record, SCENE_RECORD_CHAR_UUID)
+        self._last_command = time.monotonic()
+        self._schedule_keepalive()
+        return protocol.parse_scene_write(response)
 
     async def read_device_info(self) -> dict[str, str]:
         """Read the Device Information Service, skipping missing fields."""

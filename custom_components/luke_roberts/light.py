@@ -13,7 +13,7 @@ from homeassistant.components.light import (
     LightEntityFeature,
 )
 from homeassistant.const import STATE_ON
-from homeassistant.core import HomeAssistant
+from homeassistant.core import HomeAssistant, ServiceResponse, SupportsResponse
 from homeassistant.exceptions import ServiceValidationError
 from homeassistant.helpers import config_validation as cv, entity_platform
 from homeassistant.helpers.entity_platform import AddConfigEntryEntitiesCallback
@@ -26,7 +26,10 @@ from .const import (
     MAX_KELVIN,
     MIN_KELVIN,
     SCENE_OFF,
+    SERVICE_BACKUP_SCENES,
     SERVICE_IMMEDIATE_LIGHT,
+    SERVICE_RENAME_SCENE,
+    SERVICE_RESTORE_SCENE,
 )
 from .entity import LukeRobertsEntity
 from .protocol import Downlight, Uplight
@@ -39,6 +42,14 @@ ATTR_UPLIGHT_KELVIN = "uplight_kelvin"
 ATTR_UPLIGHT_BRIGHTNESS = "uplight_brightness"
 ATTR_DOWNLIGHT_KELVIN = "downlight_kelvin"
 ATTR_DOWNLIGHT_BRIGHTNESS = "downlight_brightness"
+ATTR_SCENE = "scene"
+ATTR_NAME = "name"
+
+SCENE_SCHEMA = {vol.Required(ATTR_SCENE): vol.Any(cv.positive_int, cv.string)}
+RENAME_SCENE_SCHEMA = {
+    **SCENE_SCHEMA,
+    vol.Required(ATTR_NAME): vol.All(cv.string, vol.Length(min=1)),
+}
 
 IMMEDIATE_LIGHT_SCHEMA = {
     vol.Optional(ATTR_UPLIGHT_HS_COLOR): vol.All(
@@ -81,6 +92,21 @@ async def async_setup_entry(
         SERVICE_IMMEDIATE_LIGHT,
         IMMEDIATE_LIGHT_SCHEMA,
         "async_immediate_light",
+    )
+    platform.async_register_entity_service(
+        SERVICE_BACKUP_SCENES,
+        {},
+        "async_backup_scenes",
+        supports_response=SupportsResponse.OPTIONAL,
+    )
+    platform.async_register_entity_service(
+        SERVICE_RENAME_SCENE, RENAME_SCENE_SCHEMA, "async_rename_scene"
+    )
+    platform.async_register_entity_service(
+        SERVICE_RESTORE_SCENE,
+        SCENE_SCHEMA,
+        "async_restore_scene",
+        supports_response=SupportsResponse.OPTIONAL,
     )
 
 
@@ -217,3 +243,32 @@ class LukeRobertsLight(LukeRobertsEntity, LightEntity, RestoreEntity):
         if duration_ms > 0xFFFF:
             raise ServiceValidationError("duration must be at most 65 seconds")
         await self._lamp.immediate_light(uplight, downlight, duration_ms)
+
+    def _scene_id(self, value: int | str) -> int:
+        """Scene id from an id or a name of the scene list."""
+        options = self._lamp.scene_options()
+        if isinstance(value, int) or str(value).strip().isdigit():
+            scene_id = int(value)
+            if scene_id in options.values():
+                return scene_id
+        elif str(value) in options:
+            return options[str(value)]
+        raise ServiceValidationError(
+            f"Unknown scene '{value}', refresh the scenes if it was just created"
+        )
+
+    async def async_backup_scenes(self) -> ServiceResponse:
+        """Read all scene records from the lamp and keep a backup."""
+        backup = await self._lamp.backup_scenes()
+        return backup.summary()
+
+    async def async_rename_scene(self, **kwargs: Any) -> None:
+        """Rename a static scene (a backup is made first)."""
+        await self._lamp.rename_scene(
+            self._scene_id(kwargs[ATTR_SCENE]), kwargs[ATTR_NAME]
+        )
+
+    async def async_restore_scene(self, **kwargs: Any) -> ServiceResponse:
+        """Write a scene back from the newest backup that differs."""
+        backup = await self._lamp.restore_scene(self._scene_id(kwargs[ATTR_SCENE]))
+        return {"restored_from": backup.time, "reason": backup.reason}
