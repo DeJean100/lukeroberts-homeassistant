@@ -90,7 +90,10 @@ otherwise).
   uplight 16 segments × `[sat, u16 hue*65535 (or kelvin if sat=0), bri]`,
   downlight 84 bytes per spot brightness (rings of 0/3/6/…/21), 20 byte name
 * wireType 2 (108 bytes): header, u16 kelvin, 78 zero bytes, name. Seen on
-  the built-in dynamic scene "Demo"; the animation itself is not in the record.
+  the built-in dynamic scene "Demo" (a rotating "lighthouse" uplight); the
+  animation is not in the record, so it must live in the firmware. Users
+  cannot create these scenes in the app. Treat them as read-only: never
+  rewrite, copy or delete them.
 * wireType 3 (28 bytes): header and name (the "Off" scene, id 0)
 * wireType 0 (8 bytes, header only): delete; also how empty slots are reported
 * New scenes are written with sceneId 254.
