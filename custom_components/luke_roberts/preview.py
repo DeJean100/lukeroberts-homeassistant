@@ -48,6 +48,11 @@ def _uplight_rgb(saturation: int, value: int) -> tuple[int, int, int]:
     return round(red * 255), round(green * 255), round(blue * 255)
 
 
+def _opacity(level: int) -> str:
+    """Perceived brightness: dim levels look brighter than linear (sqrt)."""
+    return f"{math.sqrt(level / 255):.2f}"
+
+
 def _angle(index: int, count: int) -> float:
     """Counter-clockwise from the top, in screen coordinates."""
     return -2 * math.pi * index / count - math.pi / 2
@@ -106,7 +111,7 @@ def scene_svg(record: SceneRecord) -> bytes:
         parts.append(
             f'<path d="M{x0:.1f},{y0:.1f} A{radius:.1f},{radius:.1f} 0 0 0 '
             f'{x1:.1f},{y1:.1f}" fill="none" stroke="rgb({red},{green},{blue})" '
-            f'stroke-opacity="{brightness / 255:.2f}" stroke-width="{SIZE * 0.07:.1f}"/>'
+            f'stroke-opacity="{_opacity(brightness)}" stroke-width="{SIZE * 0.07:.1f}"/>'
         )
 
     # Downlight: 84 spots in 7 rings at the scene's colour temperature.
@@ -126,7 +131,7 @@ def scene_svg(record: SceneRecord) -> bytes:
                 f'<circle cx="{center + ring_radius * math.cos(angle):.1f}" '
                 f'cy="{center + ring_radius * math.sin(angle):.1f}" '
                 f'r="{SIZE * 0.05:.1f}" fill="rgb({red},{green},{blue})" '
-                f'fill-opacity="{level / 255:.2f}"/>'
+                f'fill-opacity="{_opacity(level)}"/>'
             )
     parts.append(f'<g filter="url(#glow)">{"".join(spots)}</g>')
     return _frame("".join(parts))

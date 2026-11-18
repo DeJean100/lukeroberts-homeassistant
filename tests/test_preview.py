@@ -100,3 +100,52 @@ async def test_preview_follows_the_scene(hass: HomeAssistant) -> None:
     assert image.content == scene_svg(protocol.SceneRecord(client.records[2]))
     state = hass.states.get(IMAGE)
     assert state.attributes["scene"] == "Gemütlich"
+
+
+async def test_entity_picture_changes_with_the_scene(
+    hass: HomeAssistant, hass_client, freezer
+) -> None:
+    """The picture URL carries a version, so thumbnails do not stay cached."""
+    client = FakeLampClient()
+    await _setup_ble(hass, client)
+    with patch(
+        "custom_components.luke_roberts.ble.establish_connection",
+        AsyncMock(return_value=client),
+    ):
+        await hass.services.async_call(
+            DOMAIN,
+            SERVICE_BACKUP_SCENES,
+            {ATTR_ENTITY_ID: LIGHT},
+            blocking=True,
+            return_response=True,
+        )
+        await hass.async_block_till_done()
+        first = hass.states.get(IMAGE).attributes["entity_picture"]
+        assert "&v=" in first
+
+        client.records[2] = (
+            client.records[2][:120] + b"\xff" * 38 + client.records[2][158:]
+        )
+        client.change_record(client.records[2])
+        freezer.tick(5)
+        await hass.services.async_call(
+            LIGHT_DOMAIN,
+            SERVICE_TURN_ON,
+            {ATTR_ENTITY_ID: LIGHT, ATTR_EFFECT: "Gemütlich"},
+            blocking=True,
+        )
+        await hass.services.async_call(
+            "button",
+            "press",
+            {ATTR_ENTITY_ID: "button.esstisch_refresh_scenes"},
+            blocking=True,
+        )
+        await hass.async_block_till_done()
+    second = hass.states.get(IMAGE).attributes["entity_picture"]
+    assert second != first
+
+    http = await hass_client()
+    response = await http.get(second)
+    assert response.status == 200
+    assert response.headers["Content-Type"] == "image/svg+xml"
+    assert await response.read() == scene_svg(protocol.SceneRecord(client.records[2]))

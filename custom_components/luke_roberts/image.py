@@ -50,6 +50,18 @@ class LukeRobertsScenePreview(LukeRobertsEntity, ImageEntity):
         return scene_svg(record)
 
     @property
+    def entity_picture(self) -> str | None:
+        """The image URL with a version, so browsers do not show a cached picture.
+
+        Home Assistant's URL only changes when the access token is renewed
+        (every 5 minutes); the thumbnail would keep the old scene until then.
+        """
+        url = super().entity_picture
+        if url is None or self._attr_image_last_updated is None:
+            return url
+        return f"{url}&v={int(self._attr_image_last_updated.timestamp() * 1000)}"
+
+    @property
     def extra_state_attributes(self) -> dict[str, object]:
         """The scene shown."""
         scene_id = self._lamp.state.scene_id
