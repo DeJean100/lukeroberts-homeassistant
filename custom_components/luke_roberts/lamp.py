@@ -669,6 +669,7 @@ class LukeRobertsLamp:
     async def _sync_all(self, ble: LukeRobertsBle) -> SceneCache:
         """Read all scene slots, collecting intact records over several attempts."""
         collected: dict[int, protocol.SceneRecord] = {}
+        damaged: dict[int, list[bytes]] = {}
         last: protocol.SyncDone | None = None
         for attempt in range(1, SYNC_ALL_ATTEMPTS + 1):
             done, stream = await ble.sync_scenes(0, bytes(4))
@@ -677,9 +678,28 @@ class LukeRobertsLamp:
             if last is not None and (
                 done.revision != last.revision or done.records != last.records
             ):
-                collected = {}  # the scenes changed meanwhile, start over
+                collected, damaged = {}, {}  # changed meanwhile, start over
             last = done
             collected.update(protocol.recover_scene_records(stream, done.records))
+            # Scenes with gaps: rebuild from two damaged copies when unique.
+            for scene_id, segment in protocol.scene_segments(
+                stream, done.records
+            ).items():
+                if scene_id in collected:
+                    continue
+                copies = damaged.setdefault(scene_id, [])
+                # Only pairs with the new copy; older pairs were tried before.
+                for earlier in copies:
+                    record = await asyncio.get_running_loop().run_in_executor(
+                        None,
+                        protocol.merge_damaged_records,
+                        scene_id,
+                        [earlier, segment],
+                    )
+                    if record is not None:
+                        collected[scene_id] = record
+                        break
+                copies.append(segment)
             _LOGGER.debug(
                 "%s: full scene read attempt %d: %d of %d slots",
                 self.name,

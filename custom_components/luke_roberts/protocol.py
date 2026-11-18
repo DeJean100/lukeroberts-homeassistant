@@ -494,3 +494,102 @@ def recover_scene_records(stream: bytes, slots: int) -> dict[int, SceneRecord]:
         if complete and _plausible(record):
             found[scene_id] = SceneRecord(bytes(record))
     return found
+
+
+def scene_segments(stream: bytes, slots: int) -> dict[int, bytes]:
+    """Each record of a full Sync as received, possibly with gaps inside.
+
+    A segment runs from the header of an id to the header of the next id
+    (or to the end of the stream for the last slot). Notifications are
+    dropped whole and records have an even length, so a segment is the
+    record with some 2-byte chunks missing, in order.
+    """
+    segments: dict[int, bytes] = {}
+    starts: dict[int, int] = {}
+    for offset in range(0, len(stream) - SCENE_HEADER_LENGTH + 1, 2):
+        scene_id = stream[offset + 1]
+        if (
+            scene_id < slots
+            and scene_id not in starts
+            and _header_at(stream, offset, scene_id)
+        ):
+            starts[scene_id] = offset
+    for scene_id, start in starts.items():
+        if scene_id == slots - 1:
+            end = len(stream)
+        elif (end := starts.get(scene_id + 1, -1)) <= start:
+            continue
+        segments[scene_id] = stream[start:end]
+    return segments
+
+
+def _unique_supersequence(
+    first: list[bytes], second: list[bytes]
+) -> list[bytes] | None:
+    """The shortest common supersequence if it is unique, else None."""
+    n, m = len(first), len(second)
+    # length[i][j]: length of the shortest common supersequence of the tails
+    length = [[0] * (m + 1) for _ in range(n + 1)]
+    for i in range(n, -1, -1):
+        for j in range(m, -1, -1):
+            if i == n or j == m:
+                length[i][j] = (n - i) + (m - j)
+            elif first[i] == second[j]:
+                length[i][j] = 1 + length[i + 1][j + 1]
+            else:
+                length[i][j] = 1 + min(length[i + 1][j], length[i][j + 1])
+    # results[i][j]: up to two distinct shortest supersequences of the tails
+    results: list[list[list[tuple[bytes, ...]]]] = [
+        [[] for _ in range(m + 1)] for _ in range(n + 1)
+    ]
+    for i in range(n, -1, -1):
+        for j in range(m, -1, -1):
+            if i == n or j == m:
+                results[i][j] = [tuple(first[i:]) + tuple(second[j:])]
+                continue
+            options: list[tuple[bytes, ...]] = []
+            if first[i] == second[j]:
+                options = [(first[i], *tail) for tail in results[i + 1][j + 1]]
+            else:
+                if length[i + 1][j] <= length[i][j + 1]:
+                    options += [(first[i], *tail) for tail in results[i + 1][j]]
+                if length[i][j + 1] <= length[i + 1][j]:
+                    options += [(second[j], *tail) for tail in results[i][j + 1]]
+            unique = list(dict.fromkeys(options))
+            results[i][j] = unique[:2]
+    found = results[0][0]
+    return list(found[0]) if len(found) == 1 else None
+
+
+def merge_damaged_records(scene_id: int, copies: list[bytes]) -> SceneRecord | None:
+    """Rebuild a record from damaged copies (records with chunks missing).
+
+    Two copies are combined only if their shortest common supersequence has
+    exactly the record's length and is unique: the real record is then a
+    common supersequence of that minimal length, so it must be this one.
+    """
+    if not copies:
+        return None
+    scene_type = copies[0][3] if len(copies[0]) > 3 else None
+    length = SCENE_RECORD_LENGTH.get(scene_type)  # type: ignore[call-overload]
+    if length is None:
+        return None
+    chunked = [
+        [copy[i : i + 2] for i in range(0, len(copy), 2)]
+        for copy in copies
+        if len(copy) % 2 == 0 and len(copy) < length
+    ]
+    for a in range(len(chunked)):
+        for b in range(a + 1, len(chunked)):
+            merged = _unique_supersequence(chunked[a], chunked[b])
+            if merged is None:
+                continue
+            raw = b"".join(merged)
+            if (
+                len(raw) == length
+                and _header_at(raw, 0, scene_id)
+                and raw[3] == scene_type
+                and _plausible(raw)
+            ):
+                return SceneRecord(raw)
+    return None

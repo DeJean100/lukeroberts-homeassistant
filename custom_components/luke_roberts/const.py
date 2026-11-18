@@ -20,6 +20,8 @@ SETTINGS_CHAR_UUID: Final = "44092841-0567-11e6-b862-0002a5d5c51b"
 SCENE_RECORD_CHAR_UUID: Final = "44092843-0567-11e6-b862-0002a5d5c51b"
 # How long a Sync may take: about 2 s for 20 scenes through a proxy.
 SYNC_TIMEOUT: Final = 15.0
+# A Sync answer that has not come this long after the last record is lost.
+SYNC_IDLE_TIMEOUT: Final = 2.0
 
 # Device Information Service (0x180A)
 DIS_MANUFACTURER_UUID: Final = "00002a29-0000-1000-8000-00805f9b34fb"

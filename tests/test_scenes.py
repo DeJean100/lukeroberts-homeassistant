@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 from pathlib import Path
 from unittest.mock import AsyncMock, patch
 
@@ -337,6 +338,80 @@ async def test_full_read_collects_over_attempts(hass: HomeAssistant) -> None:
         assert attempt["n"] == 2
         assert {k: v.raw for k, v in records.items()} == client.records
         await lamp.ble.disconnect()
+
+
+def test_merge_damaged_records() -> None:
+    """Two copies with gaps in different places give the record back."""
+    stream = bytes.fromhex(FIXTURE.read_text().replace("\n", ""))
+    reference = {r.scene_id: r for r in protocol.parse_scene_records(stream)}
+    for scene_id in (2, 4, 13, 18):
+        raw = reference[scene_id].raw
+        chunks = [raw[i : i + 2] for i in range(0, len(raw), 2)]
+        first = b"".join(chunks[:12] + chunks[15:])
+        second = b"".join(chunks[:60] + chunks[62:])
+        merged = protocol.merge_damaged_records(scene_id, [first, second])
+        assert merged == reference[scene_id]
+        # The same gap twice cannot be filled.
+        assert protocol.merge_damaged_records(scene_id, [first, first]) is None
+
+
+def test_merge_refuses_ambiguous_copies() -> None:
+    """Repeating data with gaps that fit several ways is not guessed."""
+    raw = static_record(1, "Lesen", 10)  # uplight and downlight repeat
+    chunks = [raw[i : i + 2] for i in range(0, len(raw), 2)]
+    first = b"".join(chunks[:20] + chunks[21:])
+    second = b"".join(chunks[:30] + chunks[31:])
+    merged = protocol.merge_damaged_records(1, [first, second])
+    assert merged is None or merged.raw == raw
+
+
+async def test_full_read_repairs_damaged_scenes(hass: HomeAssistant) -> None:
+    """A scene damaged in every attempt is rebuilt from two copies."""
+    client = FakeLampClient()
+    client.records[2] = bytes.fromhex(FIXTURE.read_text().replace("\n", ""))[
+        28 + 178 : 28 + 2 * 178
+    ]
+    client.records[2] = client.records[2][:1] + b"\x02" + client.records[2][2:]
+    client.chunk = 2
+    attempt = {"n": 0}
+
+    def drop(n: int) -> bool:
+        if n == 0:
+            attempt["n"] += 1
+        # Scene 2 starts at chunk 14 + 89 = 103; lose a different chunk of it.
+        return n == (110 if attempt["n"] == 1 else 160)
+
+    client.drop_chunk = drop
+    with patch(
+        "custom_components.luke_roberts.ble.establish_connection",
+        AsyncMock(return_value=client),
+    ):
+        lamp = await _lamp(hass, client)
+        _, records = await lamp.read_scene_records()
+        assert attempt["n"] == 2
+        assert records[2].raw == client.records[2]
+        await lamp.ble.disconnect()
+
+
+async def test_lost_answer_ends_a_sync_early() -> None:
+    """Without the final answer the Sync ends shortly after the last record."""
+    client = FakeLampClient()
+    client.drop_done = 1
+    with (
+        patch(
+            "custom_components.luke_roberts.ble.establish_connection",
+            AsyncMock(return_value=client),
+        ),
+        patch("custom_components.luke_roberts.ble.SYNC_IDLE_TIMEOUT", 0.1),
+    ):
+        ble = LukeRobertsBle(service_info().device, "Lamp", linger=0)
+        loop = asyncio.get_running_loop()
+        start = loop.time()
+        done, stream = await ble.sync_scenes(0, bytes(4), timeout=10)
+        assert done is None
+        assert stream
+        assert loop.time() - start < 2
+        await ble.disconnect()
 
 
 async def test_changes_are_retried_and_never_half_taken(hass: HomeAssistant) -> None:

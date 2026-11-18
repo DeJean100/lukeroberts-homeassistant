@@ -38,6 +38,7 @@ from .const import (
     SCENE_CHAR_UUID,
     SCENE_RECORD_CHAR_UUID,
     SETTINGS_CHAR_UUID,
+    SYNC_IDLE_TIMEOUT,
     SYNC_TIMEOUT,
 )
 
@@ -232,8 +233,11 @@ class LukeRobertsBle:
         lamp answers a Sync with nothing to send with status 0x82.
         """
         stream = bytearray()
+        last_chunk = time.monotonic()
 
         def on_record(_sender: object, data: bytearray) -> None:
+            nonlocal last_chunk
+            last_chunk = time.monotonic()
             stream.extend(data)
 
         def on_settings(_sender: object, data: bytearray) -> None:
@@ -244,16 +248,30 @@ class LukeRobertsBle:
             client = await self._ensure_connected()
             await client.start_notify(SETTINGS_CHAR_UUID, on_settings)
             await client.start_notify(SCENE_RECORD_CHAR_UUID, on_record)
+            frame = protocol.sync(revision, database)
+            self._response = asyncio.get_running_loop().create_future()
+            _LOGGER.debug("%s: -> 2842 %s", self._name, frame.hex(" "))
             try:
-                try:
-                    response = await self._request_locked(
-                        protocol.sync(revision, database), timeout=timeout
-                    )
-                except TimeoutError:
-                    _LOGGER.debug("%s: no answer to Sync", self._name)
-                else:
+                await client.write_gatt_char(API_CHAR_UUID, frame, response=True)
+                deadline = time.monotonic() + timeout
+                response: bytes | None = None
+                while response is None:
+                    try:
+                        async with asyncio.timeout(0.25):
+                            response = await asyncio.shield(self._response)
+                    except TimeoutError:
+                        now = time.monotonic()
+                        # A proxy may lose the final answer too: give up when
+                        # the records stopped coming, not only at the deadline.
+                        if now > deadline or (
+                            stream and now - last_chunk > SYNC_IDLE_TIMEOUT
+                        ):
+                            _LOGGER.debug("%s: no answer to Sync", self._name)
+                            break
+                if response is not None:
                     done = protocol.parse_sync_done(response)
             finally:
+                self._response = None
                 for uuid in (SCENE_RECORD_CHAR_UUID, SETTINGS_CHAR_UUID):
                     with contextlib.suppress(Exception):
                         await client.stop_notify(uuid)
