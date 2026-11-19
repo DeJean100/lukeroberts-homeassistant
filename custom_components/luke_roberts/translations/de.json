@@ -384,6 +384,16 @@
           "description": "Helligkeit des hellsten Downlight Spots."
         }
       }
+    },
+    "test_bluetooth_link": {
+      "name": "Bluetooth-Verbindung testen",
+      "description": "Alle Szenen einige Male aus der Lampe lesen (nur lesen) und melden, wie viel ankam. Eine direkte Verbindung liefert alles; ein Bluetooth Proxy kann Nachrichten verlieren.",
+      "fields": {
+        "attempts": {
+          "name": "Versuche",
+          "description": "Wie oft gelesen wird."
+        }
+      }
     }
   },
   "exceptions": {

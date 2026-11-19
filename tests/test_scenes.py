@@ -862,3 +862,32 @@ async def test_written_scene_confirmed_through_heavy_loss(hass: HomeAssistant) -
         with pytest.raises(HomeAssistantError):
             await lamp.save_scene_light(1, light)
         await lamp.ble.disconnect()
+
+
+async def test_bluetooth_link_test(hass: HomeAssistant) -> None:
+    """The link test reads all slots, reports losses and writes nothing."""
+    client = FakeLampClient()
+    await _setup_ble(hass, client)
+    with patch(
+        "custom_components.luke_roberts.ble.establish_connection",
+        AsyncMock(return_value=client),
+    ):
+        await hass.services.async_call(
+            DOMAIN, "backup_scenes", {ATTR_ENTITY_ID: LIGHT}, blocking=True
+        )
+        client.chunk = 2
+        client.drop_chunk = lambda n: n % 10 == 0  # 10 % lost
+        result = await hass.services.async_call(
+            DOMAIN,
+            "test_bluetooth_link",
+            {ATTR_ENTITY_ID: LIGHT, "attempts": 2},
+            blocking=True,
+            return_response=True,
+        )
+    report = result[LIGHT]
+    total = sum(len(r) for r in client.records.values())
+    assert report["expected_bytes"] == total
+    assert len(report["attempts"]) == 2
+    assert 9 <= report["average_lost_percent"] <= 11
+    assert report["final_answers_missing"] == 0
+    assert client.record_writes == []

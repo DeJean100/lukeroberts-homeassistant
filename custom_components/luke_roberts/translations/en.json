@@ -384,6 +384,16 @@
           "description": "Brightness of the brightest downlight spot."
         }
       }
+    },
+    "test_bluetooth_link": {
+      "name": "Test Bluetooth link",
+      "description": "Read all scenes from the lamp a few times (read-only) and report how much arrived. A direct link delivers everything; a Bluetooth proxy may drop messages.",
+      "fields": {
+        "attempts": {
+          "name": "Attempts",
+          "description": "How many times to read."
+        }
+      }
     }
   },
   "exceptions": {

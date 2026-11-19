@@ -824,6 +824,49 @@ class LukeRobertsLamp:
             f"{SYNC_ALL_ATTEMPTS} attempts (weak Bluetooth link?); try again"
         )
 
+    async def test_bluetooth_link(self, attempts: int = 5) -> dict[str, Any]:
+        """Read all scene slots a few times and report how much arrived.
+
+        Read-only. The lamp sends every slot in tiny notifications; a direct
+        Bluetooth link delivers all of them, a Bluetooth proxy may drop some.
+        """
+        ble = self._scene_ble()
+        if self.scene_backups is None:
+            raise HomeAssistantError(f"{self.name}: no storage for scene backups")
+        cache = await self.scene_backups.cache()
+        expected = (
+            sum(len(record.raw) for record in cache.records.values()) if cache else None
+        )
+        results: list[dict[str, Any]] = []
+        async with self._scene_lock:
+            for _ in range(attempts):
+                started = time.monotonic()
+                try:
+                    done, stream = await ble.sync_scenes(0, bytes(4))
+                except BLE_ERRORS as err:
+                    raise HomeAssistantError(
+                        f"{self.name}: lamp not reachable over Bluetooth ({err})"
+                    ) from err
+                result: dict[str, Any] = {
+                    "received_bytes": len(stream),
+                    "final_answer": done is not None,
+                    "seconds": round(time.monotonic() - started, 1),
+                }
+                if expected:
+                    result["lost_percent"] = round(
+                        100 * max(0, expected - len(stream)) / expected, 1
+                    )
+                results.append(result)
+        losses = [r["lost_percent"] for r in results if "lost_percent" in r]
+        return {
+            "expected_bytes": expected,
+            "attempts": results,
+            "average_lost_percent": round(sum(losses) / len(losses), 1)
+            if losses
+            else None,
+            "final_answers_missing": sum(not r["final_answer"] for r in results),
+        }
+
     async def backup_scenes(self, reason: str = "manual") -> SceneBackup:
         """Read all scene records and keep them as a backup."""
         async with self._scene_lock:

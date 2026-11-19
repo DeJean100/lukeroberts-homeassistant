@@ -34,6 +34,7 @@ from .const import (
     SERVICE_PREVIEW_SCENE,
     SERVICE_RENAME_SCENE,
     SERVICE_RESTORE_SCENE,
+    SERVICE_TEST_BLUETOOTH_LINK,
 )
 from .entity import LukeRobertsEntity
 from .protocol import Downlight, Uplight
@@ -122,6 +123,16 @@ async def async_setup_entry(
     )
     platform.async_register_entity_service(
         SERVICE_PREVIEW_SCENE, edit_schema, "async_preview_scene"
+    )
+    platform.async_register_entity_service(
+        SERVICE_TEST_BLUETOOTH_LINK,
+        {
+            vol.Optional("attempts", default=5): vol.All(
+                vol.Coerce(int), vol.Range(1, 10)
+            )
+        },
+        "async_test_bluetooth_link",
+        supports_response=SupportsResponse.ONLY,
     )
     platform.async_register_entity_service(
         SERVICE_DUPLICATE_SCENE,
@@ -317,6 +328,10 @@ class LukeRobertsLight(LukeRobertsEntity, LightEntity, RestoreEntity):
         if all(value is None for value in changes.values()):
             raise ServiceValidationError("Nothing to change")
         await self._lamp.edit_scene(self._scene_id(kwargs[ATTR_SCENE]), **changes)
+
+    async def async_test_bluetooth_link(self, **kwargs: Any) -> dict[str, Any]:
+        """Measure how much of a full scene read arrives (read-only)."""
+        return await self._lamp.test_bluetooth_link(kwargs["attempts"])
 
     async def async_preview_scene(self, **kwargs: Any) -> None:
         """Show a static scene, with optional changes, without saving it."""
