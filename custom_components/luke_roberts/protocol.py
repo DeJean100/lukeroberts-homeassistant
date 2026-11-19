@@ -553,6 +553,29 @@ def intact_record(segment: bytes) -> SceneRecord | None:
     return SceneRecord(bytes(segment))
 
 
+def stream_gaps(full: bytes, received: bytes) -> list[list[int]] | None:
+    """Where a received stream has gaps, as ``[offset, length]`` in ``full``.
+
+    Chunks are placed at their earliest fit, so a gap inside a run of equal
+    chunks shows at the end of the run. None if the stream does not fit.
+    """
+    gaps: list[list[int]] = []
+    position = 0
+    for i in range(0, len(received), 2):
+        chunk = received[i : i + 2]
+        start = position
+        while position < len(full) and full[position : position + 2] != chunk:
+            position += 2
+        if position >= len(full):
+            return None
+        if position > start:
+            gaps.append([start, position - start])
+        position += 2
+    if position < len(full):
+        gaps.append([position, len(full) - position])
+    return gaps
+
+
 CONFIRM_DOUBT = 1e-3
 
 

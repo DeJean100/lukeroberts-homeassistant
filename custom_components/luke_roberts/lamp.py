@@ -834,9 +834,12 @@ class LukeRobertsLamp:
         if self.scene_backups is None:
             raise HomeAssistantError(f"{self.name}: no storage for scene backups")
         cache = await self.scene_backups.cache()
-        expected = (
-            sum(len(record.raw) for record in cache.records.values()) if cache else None
+        full = (
+            b"".join(cache.records[i].raw for i in sorted(cache.records))
+            if cache
+            else b""
         )
+        expected = len(full) or None
         results: list[dict[str, Any]] = []
         async with self._scene_lock:
             for _ in range(attempts):
@@ -856,6 +859,7 @@ class LukeRobertsLamp:
                     result["lost_percent"] = round(
                         100 * max(0, expected - len(stream)) / expected, 1
                     )
+                    result["gaps"] = protocol.stream_gaps(full, stream)
                 results.append(result)
         losses = [r["lost_percent"] for r in results if "lost_percent" in r]
         return {

@@ -890,4 +890,5 @@ async def test_bluetooth_link_test(hass: HomeAssistant) -> None:
     assert len(report["attempts"]) == 2
     assert 9 <= report["average_lost_percent"] <= 11
     assert report["final_answers_missing"] == 0
+    assert report["attempts"][0]["gaps"][0] == [0, 2]  # chunk 0 dropped
     assert client.record_writes == []
