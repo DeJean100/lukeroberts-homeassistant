@@ -802,3 +802,63 @@ async def test_preview_scene(hass: HomeAssistant) -> None:
                 {ATTR_ENTITY_ID: LIGHT, "scene": 3, "downlight_kelvin": 3000},
                 blocking=True,
             )
+
+
+def test_confirms_record() -> None:
+    """Damaged copies confirm a known record when they fit and are enough."""
+    record = static_record(4, "Vier", 10)
+    chunks = [record[i : i + 2] for i in range(0, len(record), 2)]
+
+    def without(drop: set[int]) -> bytes:
+        return b"".join(c for i, c in enumerate(chunks) if i not in drop)
+
+    copies = [
+        without({i for i in range(len(chunks)) if i % 3 == k % 3}) for k in range(7)
+    ]
+    assert protocol.confirms_record(record, copies)  # (1/3)^7 < 1/1000
+    assert not protocol.confirms_record(record, copies[:3])  # 1/27: not enough
+    assert protocol.confirms_record(record, [record])  # one intact copy
+    other = bytearray(record)
+    other[100] ^= 0xFF
+    assert not protocol.confirms_record(record, [bytes(other)] + copies)
+    assert not protocol.confirms_record(record, [])
+
+
+async def test_written_scene_confirmed_through_heavy_loss(hass: HomeAssistant) -> None:
+    """Every read-back loses a third of the record: the copies confirm it.
+
+    A lamp that stored something else is still caught.
+    """
+    client = FakeLampClient()
+    with (
+        patch(
+            "custom_components.luke_roberts.ble.establish_connection",
+            AsyncMock(return_value=client),
+        ),
+        patch("custom_components.luke_roberts.lamp.SYNC_CHANGES_TIMEOUT", 0.05),
+    ):
+        lamp = await _lamp(hass, client)
+        await lamp.read_scene_records()
+        client.chunk = 2
+        tries = {"n": 0}
+
+        def drop(n: int) -> bool:
+            if n == 0:
+                tries["n"] += 1
+            return n % 3 == tries["n"] % 3  # never intact, a different third
+
+        client.drop_chunk = drop
+        light = protocol.StaticScene.from_record(
+            protocol.SceneRecord(client.records[1])
+        )
+        light.kelvin = 3800
+        new_id = await lamp.create_scene("Neu", light)
+        assert protocol.SceneRecord(client.records[new_id]).name == "Neu"
+        cache = await lamp.scene_backups.cache()
+        assert cache.records[new_id].raw == client.records[new_id]
+
+        client.mangle_record = lambda raw: raw[:-20] + b"Falsch".ljust(20, b"\x00")
+        light.kelvin = 3000
+        with pytest.raises(HomeAssistantError):
+            await lamp.save_scene_light(1, light)
+        await lamp.ble.disconnect()

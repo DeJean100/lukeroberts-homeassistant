@@ -267,6 +267,11 @@ class LukeRobertsSceneCard extends HTMLElement {
     return 9;
   }
 
+  /** Sections view: always the full width; the editor needs the room. */
+  getGridOptions() {
+    return { columns: 12, min_columns: 12, max_columns: 12 };
+  }
+
   static getConfigForm() {
     return {
       schema: [
@@ -695,5 +700,7 @@ if (!customElements.get("luke-roberts-scene-card")) {
     type: "luke-roberts-scene-card",
     name: "Luke Roberts scene editor",
     description: "Edit the scenes stored in a Luke Roberts lamp, with a live preview on the lamp.",
+    preview: true,
+    documentationURL: "https://github.com/DeJean100/lukeroberts-homeassistant#scene-backup-rename-restore-duplicate-and-delete",
   });
 }

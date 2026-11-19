@@ -616,7 +616,9 @@ class LukeRobertsLamp:
             )
         return self.ble
 
-    async def read_scene_records(self) -> tuple[int, dict[int, protocol.SceneRecord]]:
+    async def read_scene_records(
+        self, expected: protocol.SceneRecord | None = None
+    ) -> tuple[int, dict[int, protocol.SceneRecord]]:
         """Bring the scene cache up to date and return revision and records.
 
         Like the Luke Roberts app, only the scenes changed since the cached
@@ -632,7 +634,7 @@ class LukeRobertsLamp:
         try:
             cache = await self.scene_backups.cache()
             if cache is not None:
-                updated = await self._sync_changes(ble, cache)
+                updated = await self._sync_changes(ble, cache, expected)
                 if updated is not None:
                     cache = updated
                 else:
@@ -699,7 +701,10 @@ class LukeRobertsLamp:
             _LOGGER.debug("%s: scene records not updated: %s", self.name, err)
 
     async def _sync_changes(
-        self, ble: LukeRobertsBle, cache: SceneCache
+        self,
+        ble: LukeRobertsBle,
+        cache: SceneCache,
+        expected: protocol.SceneRecord | None = None,
     ) -> SceneCache | None:
         """Apply the scenes changed since the cache; None if a full read is needed.
 
@@ -723,9 +728,12 @@ class LukeRobertsLamp:
             ):
                 collected, damaged = {}, {}  # changed meanwhile, start over
             last = done
-            await self._collect_records(
-                protocol.changed_record_segments(stream), collected, damaged
-            )
+            segments = protocol.changed_record_segments(stream)
+            if expected is not None and done.records == 1 and stream:
+                # Only the record just written changed: the whole stream is
+                # (a damaged copy of) it, even if its header was lost.
+                segments = [(expected.scene_id, stream)]
+            await self._collect_records(segments, collected, damaged, expected)
             if len(collected) == done.records:
                 merged = dict(cache.records)
                 merged.update(collected)
@@ -748,13 +756,18 @@ class LukeRobertsLamp:
         segments: Iterable[tuple[int, bytes]],
         collected: dict[int, protocol.SceneRecord],
         damaged: dict[int, list[bytes]],
+        expected: protocol.SceneRecord | None = None,
     ) -> None:
-        """Add intact records; rebuild others from two damaged copies if unique."""
+        """Add intact records; rebuild others from two damaged copies if unique.
+
+        A record just written (``expected``) is also taken when its damaged
+        copies together confirm it.
+        """
         for scene_id, segment in segments:
             if scene_id in collected:
                 continue
             if (record := protocol.intact_record(segment)) is not None:
-                collected[scene_id] = record
+                collected[record.scene_id] = record
                 continue
             copies = damaged.setdefault(scene_id, [])
             # Only pairs with the new copy; older pairs were tried before.
@@ -766,6 +779,13 @@ class LukeRobertsLamp:
                     collected[scene_id] = record
                     break
             copies.append(segment)
+            if (
+                scene_id not in collected
+                and expected is not None
+                and scene_id == expected.scene_id
+                and protocol.confirms_record(expected.raw, copies)
+            ):
+                collected[scene_id] = expected
 
     async def _sync_all(self, ble: LukeRobertsBle) -> SceneCache:
         """Read all scene slots, collecting intact records over several attempts."""
@@ -919,9 +939,7 @@ class LukeRobertsLamp:
                     f"{self.name}: the lamp has no free scene slot"
                 )
             await self.scene_backups.add(records, revision, "before creating a scene")
-            new_id = await self._write_scene(record)
-            await self.scene_backups.set_created(new_id, True)
-            return new_id
+            return await self._write_scene(record)
 
     async def preview_scene(
         self,
@@ -1056,9 +1074,7 @@ class LukeRobertsLamp:
             await self.scene_backups.add(
                 records, revision, f"before duplicating scene {scene_id}"
             )
-            new_id = await self._write_scene(copy)
-            await self.scene_backups.set_created(new_id, True)
-            return new_id
+            return await self._write_scene(copy)
 
     async def delete_scene(self, scene_id: int) -> None:
         """Delete a scene that this integration created (with duplicate_scene).
@@ -1120,8 +1136,16 @@ class LukeRobertsLamp:
         )
         new = record.scene_id == protocol.SCENE_NEW
         expected_id = answer.scene_id if new else record.scene_id
+        if new and self.scene_backups is not None:
+            # Created, even if the check below fails: Home Assistant may
+            # delete it again.
+            await self.scene_backups.set_created(expected_id, True)
+        # What the lamp should now hold: its id and sort index, our content.
+        stored_as = protocol.SceneRecord(
+            bytes([record.raw[0], expected_id, answer.sort_index]) + record.raw[3:]
+        )
         try:
-            _, records = await self.read_scene_records()
+            _, records = await self.read_scene_records(stored_as)
         except HomeAssistantError as err:
             raise HomeAssistantError(
                 f"{self.name}: scene {expected_id} was written (the lamp "

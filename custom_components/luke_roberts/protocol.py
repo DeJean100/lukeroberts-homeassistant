@@ -553,6 +553,41 @@ def intact_record(segment: bytes) -> SceneRecord | None:
     return SceneRecord(bytes(segment))
 
 
+CONFIRM_DOUBT = 1e-3
+
+
+def confirms_record(expected: bytes, copies: list[bytes]) -> bool:
+    """Whether damaged copies of a record together confirm ``expected``.
+
+    Used to check a record just written, so its content is known. A proxy
+    drops whole 2-byte notifications, so every copy of the stored record is
+    that record with chunks left out, in order. If each copy fits
+    ``expected`` that way, a different stored record could only pass if
+    every copy had lost a differing chunk: the chance of that is at most the
+    product of the copies' loss fractions, which must be below
+    ``CONFIRM_DOUBT``. (Records have long runs of equal chunks, so which
+    chunks were lost cannot be pinned down; losses do not depend on the
+    content.)
+    """
+    if not expected or len(expected) % 2:
+        return False
+    chunks = [expected[i : i + 2] for i in range(0, len(expected), 2)]
+    doubt = 1.0
+    for copy in copies:
+        if len(copy) % 2 or len(copy) > len(expected):
+            return False
+        position = 0
+        for i in range(0, len(copy), 2):
+            chunk = copy[i : i + 2]
+            while position < len(chunks) and chunks[position] != chunk:
+                position += 1
+            if position == len(chunks):
+                return False  # does not fit: something else is stored
+            position += 1
+        doubt *= 1 - len(copy) / len(expected)
+    return bool(copies) and doubt <= CONFIRM_DOUBT
+
+
 def _unique_supersequence(
     first: list[bytes], second: list[bytes]
 ) -> list[bytes] | None:
