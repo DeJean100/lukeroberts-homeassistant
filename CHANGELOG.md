@@ -1,21 +1,22 @@
 # Changelog
 
-## Unreleased
+## 0.3.0-dejean.5 (2026-11-19, fork DeJean100)
 
-- Reading changed scenes through a Bluetooth proxy now repairs damaged
-  copies like the full read does; checking a written scene no longer fails
-  after 10 lossy attempts (seen on the lamp: 3 s instead of an error).
-- **`luke_roberts.preview_scene`**: show a static scene, optionally with changed colours
-  and brightness, on the lamp without saving it (same fields as `edit_scene`;
-  selecting a scene ends the preview). Format captured from the app.
-- **`luke_roberts.edit_scene`**: change the downlight colour temperature and
-  brightness, the uplight colour (or white) and the uplight brightness of a
-  static scene. Brightness keeps the scene's pattern. Backup first, read
-  back afterwards; nothing is written if nothing changes.
 - **Manage scenes in the Configure dialog**: a menu (Connection / Manage
   scenes) for lamps set up over Bluetooth. Pick a scene, then edit (colour
   picker, sliders), rename, duplicate, restore or delete one Home Assistant
   created. No YAML needed.
+- **`luke_roberts.edit_scene`**: change the downlight colour temperature and
+  brightness, the uplight colour (or white) and the uplight brightness of a
+  static scene. Brightness keeps the scene's pattern. Backup first, read
+  back afterwards; nothing is written if nothing changes.
+- **`luke_roberts.preview_scene`**: show a static scene, optionally with
+  changed colours and brightness, on the lamp without saving it (same fields
+  as `edit_scene`; selecting a scene ends the preview). Format captured from
+  the app.
+- Reading changed scenes through a Bluetooth proxy now repairs damaged
+  copies like the full read does; checking a written scene no longer fails
+  after 10 lossy attempts (seen on the lamp: 3 s instead of an error).
 
 ## 0.3.0-dejean.4 (2026-11-19, fork DeJean100)
 
