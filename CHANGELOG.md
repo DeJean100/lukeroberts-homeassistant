@@ -1,5 +1,14 @@
 # Changelog
 
+## Unreleased
+
+- **Scene editor card** (`custom:luke-roberts-scene-card`), shipped with the
+  integration and loaded automatically: edit a scene on a picture of the
+  lamp (uplight segments and downlight spots), with *Spread* to blend a
+  change softly, a live preview on the lamp, undo, save and save as new.
+- Websocket commands for the card: `luke_roberts/scenes`, `preview`,
+  `end_preview`, `save_scene`.
+
 ## 0.3.0-dejean.5 (2026-11-19, fork DeJean100)
 
 - **Manage scenes in the Configure dialog**: a menu (Connection / Manage

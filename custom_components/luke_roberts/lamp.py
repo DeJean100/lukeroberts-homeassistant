@@ -650,6 +650,23 @@ class LukeRobertsLamp:
         ):
             self.scene_records = dict(cache.records)
 
+    async def scene_records_for_editing(
+        self,
+    ) -> tuple[dict[int, protocol.SceneRecord], str | None]:
+        """Scene records brought up to date, or the stored copy with the reason.
+
+        An editor can still show the scenes when the lamp cannot be read
+        right now; saving reads the lamp again anyway.
+        """
+        try:
+            async with self._scene_lock:
+                _revision, records = await self.read_scene_records()
+        except HomeAssistantError as err:
+            if not self.scene_records:
+                raise
+            return dict(self.scene_records), str(err)
+        return records, None
+
     async def update_scene_records(self) -> None:
         """Catch up with scenes changed in the app, if records were read before.
 
@@ -831,23 +848,64 @@ class LukeRobertsLamp:
         Brightness is in percent and scales the scene's pattern so that its
         brightest segment or spot gets that value.
         """
-        async with self._scene_lock:
-            revision, records = await self.read_scene_records()
-            assert self.scene_backups is not None
-            record = self._static_record(records, scene_id, "edited")
-            edited = _edit_light(
-                protocol.StaticScene.from_record(record),
+
+        def change(light: protocol.StaticScene) -> protocol.StaticScene:
+            return _edit_light(
+                light,
                 kelvin=kelvin,
                 uplight_color=uplight_color,
                 uplight_brightness=uplight_brightness,
                 downlight_brightness=downlight_brightness,
-            ).apply(record)
+            )
+
+        await self._change_light(scene_id, change)
+
+    async def save_scene_light(
+        self, scene_id: int, light: protocol.StaticScene
+    ) -> None:
+        """Replace the whole light of a static scene (backup first, then check)."""
+        await self._change_light(scene_id, lambda _old: light)
+
+    async def _change_light(
+        self,
+        scene_id: int,
+        change: Callable[[protocol.StaticScene], protocol.StaticScene],
+    ) -> None:
+        async with self._scene_lock:
+            revision, records = await self.read_scene_records()
+            assert self.scene_backups is not None
+            record = self._static_record(records, scene_id, "edited")
+            try:
+                edited = change(protocol.StaticScene.from_record(record)).apply(record)
+            except protocol.SceneRecordError as err:
+                raise ServiceValidationError(f"{self.name}: {err}") from err
             if edited == record:
                 return
             await self.scene_backups.add(
                 records, revision, f"before editing scene {scene_id}"
             )
             await self._write_scene(edited)
+
+    async def create_scene(self, name: str, light: protocol.StaticScene) -> int:
+        """Store a light as a new scene in a free slot; returns its id.
+
+        Like creating a scene in the app, the lamp switches to it.
+        """
+        try:
+            record = light.new_record(name)
+        except protocol.SceneRecordError as err:
+            raise ServiceValidationError(f"{self.name}: {err}") from err
+        async with self._scene_lock:
+            revision, records = await self.read_scene_records()
+            assert self.scene_backups is not None
+            if not any(record.is_empty for record in records.values()):
+                raise ServiceValidationError(
+                    f"{self.name}: the lamp has no free scene slot"
+                )
+            await self.scene_backups.add(records, revision, "before creating a scene")
+            new_id = await self._write_scene(record)
+            await self.scene_backups.set_created(new_id, True)
+            return new_id
 
     async def preview_scene(
         self,
@@ -873,7 +931,31 @@ class LukeRobertsLamp:
                 uplight_brightness=uplight_brightness,
                 downlight_brightness=downlight_brightness,
             )
-            await self._scene_ble().write_live_model(light.live_model(record))
+        await self.preview_light(light)
+
+    async def preview_light(self, light: protocol.StaticScene) -> None:
+        """Show a light on the lamp without saving it; quick, nothing is read.
+
+        Meant for live editing: the newest call wins, so a lost write is
+        corrected by the next one.
+        """
+        try:
+            frame = light.live_model()
+        except protocol.SceneRecordError as err:
+            raise ServiceValidationError(f"{self.name}: {err}") from err
+        try:
+            await self._scene_ble().write_live_model(frame)
+        except BLE_ERRORS as err:
+            raise HomeAssistantError(
+                f"{self.name}: lamp not reachable over Bluetooth ({err})"
+            ) from err
+
+    async def end_preview(self) -> None:
+        """Back to the selected scene after previews."""
+        scene_id = self.state.scene_id
+        if scene_id is None:
+            scene_id = SCENE_DEFAULT
+        await self.select_scene(scene_id)
 
     def _static_record(
         self, records: dict[int, protocol.SceneRecord], scene_id: int, verb: str

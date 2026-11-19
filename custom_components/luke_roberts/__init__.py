@@ -37,6 +37,7 @@ from .account import (
     is_account_entry,
 )
 from .ble import BLE_ERRORS, LukeRobertsBle
+from .card import async_register_card
 from .cloud import CloudAuthError, CloudError, LukeRobertsCloud
 from .const import (
     CONF_API_KEY,
@@ -81,6 +82,7 @@ def _option(entry: ConfigEntry, key: str, default=None):
 
 async def async_setup_entry(hass: HomeAssistant, entry: LukeRobertsConfigEntry) -> bool:
     """Set up a lamp or the account from a config entry."""
+    await async_register_card(hass)
     if is_account_entry(entry):
         return await async_setup_account(hass, entry)
 

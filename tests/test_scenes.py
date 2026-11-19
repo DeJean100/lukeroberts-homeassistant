@@ -762,7 +762,7 @@ def test_live_model_matches_the_app() -> None:
     """The preview frame is byte-identical to what the app writes."""
     record = protocol.SceneRecord(CAPTURED_RECORD)
     light = protocol.StaticScene.from_record(record)
-    assert light.live_model(record) == CAPTURED_LIVE_MODEL
+    assert light.live_model() == CAPTURED_LIVE_MODEL
 
 
 async def test_preview_scene(hass: HomeAssistant) -> None:
@@ -783,7 +783,7 @@ async def test_preview_scene(hass: HomeAssistant) -> None:
         record = protocol.SceneRecord(records[1])
         light = protocol.StaticScene.from_record(record)
         light.kelvin = 3500
-        assert client.live_model == [light.live_model(record)]
+        assert client.live_model == [light.live_model()]
         assert client.record_writes == []
         assert client.records == records
 

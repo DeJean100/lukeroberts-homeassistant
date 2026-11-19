@@ -258,6 +258,13 @@ checked with a Bluetooth capture of the app and on a Model F with firmware
 menu: pick a scene, then edit colours and brightness, rename, duplicate,
 restore it from a backup, or delete a scene Home Assistant created.
 
+**Scene editor card:** the integration ships a dashboard card, *Luke Roberts
+scene editor* (add it from the card picker; nothing to install). Tap the
+outer ring (uplight) or the spots (downlight) of the lamp picture, then change
+colour and brightness; *Spread* blends the change softly into the rest of the
+scene. With *Show on lamp* the lamp follows live without saving. *Save*
+overwrites the scene (backup first), *Save as new* creates one.
+
 The scenes are read like the app does: a copy is kept in Home Assistant and
 only the scenes changed since then are asked for. The first read can take
 up to a minute through a Bluetooth proxy; after that it takes a moment.

@@ -676,10 +676,13 @@ class StaticScene:
         spots = list(raw[start : start + DOWNLIGHT_SPOTS])
         return cls(kelvin, uplight, spots)
 
-    def apply(self, record: SceneRecord) -> SceneRecord:
-        """The record with this light, keeping header and name."""
-        if record.scene_type != SceneType.STATIC:
-            raise SceneRecordError("not a static scene")
+    def light_bytes(self) -> bytes:
+        """Kelvin, 16 uplight segments and 84 spots as stored in a record."""
+        if len(self.uplight) != UPLIGHT_SEGMENTS or len(self.spots) != DOWNLIGHT_SPOTS:
+            raise SceneRecordError(
+                f"a scene has {UPLIGHT_SEGMENTS} uplight segments and "
+                f"{DOWNLIGHT_SPOTS} downlight spots"
+            )
         body = struct.pack(
             "<H", _clamp(self.kelvin, MIN_SCENE_KELVIN, MAX_SCENE_KELVIN)
         )
@@ -690,22 +693,33 @@ class StaticScene:
                 _clamp(value, 0, 0xFFFF),
                 _clamp(brightness, 0, 255),
             )
-        body += bytes(_clamp(spot, 0, 255) for spot in self.spots)
-        raw = record.raw
-        return SceneRecord(raw[:SCENE_HEADER_LENGTH] + body + raw[-SCENE_NAME_LENGTH:])
+        return body + bytes(_clamp(spot, 0, 255) for spot in self.spots)
 
-    def live_model(self, template: SceneRecord) -> bytes:
+    def apply(self, record: SceneRecord) -> SceneRecord:
+        """The record with this light, keeping header and name."""
+        if record.scene_type != SceneType.STATIC:
+            raise SceneRecordError("not a static scene")
+        raw = record.raw
+        return SceneRecord(
+            raw[:SCENE_HEADER_LENGTH] + self.light_bytes() + raw[-SCENE_NAME_LENGTH:]
+        )
+
+    def new_record(self, name: str) -> SceneRecord:
+        """A record that creates a new static scene; the lamp assigns the id."""
+        header = bytes(
+            [SCENE_RECORD_VERSION, SCENE_NEW, 0, SceneType.STATIC, 0, 0, 0, 0]
+        )
+        return SceneRecord(header + self.light_bytes() + encode_scene_name(name))
+
+    def live_model(self) -> bytes:
         """Frame that shows this light on the lamp without saving it.
 
         Written to the live light model characteristic, as the app does while
-        a scene is being edited: ``64``, then the record's light (kelvin, 16
-        uplight segments, 84 spots). Selecting a scene ends the preview.
+        a scene is being edited: ``64``, then the light as in a record
+        (kelvin, 16 uplight segments, 84 spots). Selecting a scene ends the
+        preview.
         """
-        light = self.apply(template).raw
-        return (
-            bytes([LIVE_MODEL_FULL])
-            + light[SCENE_HEADER_LENGTH : SCENE_HEADER_LENGTH + LIVE_MODEL_LIGHT_LENGTH]
-        )
+        return bytes([LIVE_MODEL_FULL]) + self.light_bytes()
 
 
 def scale_levels(levels: list[int], percent: int) -> list[int]:
