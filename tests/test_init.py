@@ -624,3 +624,35 @@ async def test_power_switch(hass: HomeAssistant) -> None:
         assert protocol.query_state() in client.written
 
     assert await hass.config_entries.async_unload(entry.entry_id)
+
+
+async def test_power_cut_when_home_assistant_starts(hass: HomeAssistant) -> None:
+    """Lamp never seen (power cut since start): available, and on works."""
+    hass.states.async_set("switch.lamp_power", "off")
+    turned_on = async_mock_service(hass, "switch", "turn_on")
+    entry = MockConfigEntry(
+        domain=DOMAIN,
+        title="Esstisch",
+        unique_id=ADDRESS.lower(),
+        data={CONF_ADDRESS: ADDRESS, CONF_NAME: "Esstisch"},
+        options={
+            CONF_CONNECTION_MODE: MODE_LOCAL_FIRST,
+            CONF_LINGER: 0,
+            "power_entity": "switch.lamp_power",
+        },
+    )
+    entry.add_to_hass(hass)
+    with patch(
+        "homeassistant.components.bluetooth.async_ble_device_from_address",
+        return_value=None,
+    ):
+        assert await hass.config_entries.async_setup(entry.entry_id)
+        await hass.async_block_till_done()
+    assert entry.runtime_data.ble is None
+    assert hass.states.get(LIGHT).state == STATE_OFF
+
+    await hass.services.async_call(
+        LIGHT_DOMAIN, SERVICE_TURN_ON, {ATTR_ENTITY_ID: LIGHT}, blocking=True
+    )
+    assert len(turned_on) == 1
+    assert await hass.config_entries.async_unload(entry.entry_id)

@@ -139,6 +139,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: LukeRobertsConfigEntry) 
         cloud_lamp_id=int(cloud_lamp_id) if cloud_lamp_id is not None else None,
     )
     lamp.ble_present = ble_device is not None
+    lamp.address_configured = bool(address)
     lamp.scene_backups = SceneBackupStore(hass, entry.unique_id or entry.entry_id)
     await lamp.load_scene_records()
     entry.runtime_data = lamp

@@ -92,6 +92,9 @@ class LukeRobertsLamp:
         self.cloud_lamp_id = cloud_lamp_id
         self.state = LampState()
         self.ble_present = ble is not None
+        # Set up with a Bluetooth address. ``ble`` stays None until the lamp
+        # is first seen, e.g. after a Home Assistant start with its power cut.
+        self.address_configured = ble is not None
         # Device information read over Bluetooth (monotonic time), None = never.
         self.details_read_at: float | None = None
         self.details_reading = False
@@ -134,6 +137,11 @@ class LukeRobertsLamp:
         return self.ble is not None and self.mode != MODE_CLOUD_ONLY
 
     @property
+    def local_configured(self) -> bool:
+        """Bluetooth is set up and allowed, even if the lamp was not seen yet."""
+        return self.address_configured and self.mode != MODE_CLOUD_ONLY
+
+    @property
     def has_cloud(self) -> bool:
         """Cloud is configured and allowed by the connection mode."""
         return (
@@ -149,7 +157,11 @@ class LukeRobertsLamp:
         With a power switch the lamp is also available while its power is
         cut and it does not advertise, so it can be switched on.
         """
-        if self.power is not None and self.has_local and self.power.is_on is not None:
+        if (
+            self.power is not None
+            and self.local_configured
+            and self.power.is_on is not None
+        ):
             return True
         return (self.has_local and self.ble_present) or self.has_cloud
 
@@ -416,8 +428,12 @@ class LukeRobertsLamp:
         self.notify()
 
     async def wait_until_reachable(self, timeout: float | None = None) -> None:
-        """Wait after power-up until the lamp answers over Bluetooth."""
-        if not self.has_local:
+        """Wait after power-up until the lamp answers over Bluetooth.
+
+        The lamp may not have been seen before (power cut since Home
+        Assistant started): then its first advertisement creates ``ble``.
+        """
+        if not self.local_configured:
             return
         if timeout is None:
             timeout = POWER_UP_TIMEOUT

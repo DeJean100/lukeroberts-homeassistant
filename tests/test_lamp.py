@@ -11,6 +11,7 @@ import pytest
 from custom_components.luke_roberts import protocol
 from custom_components.luke_roberts.const import (
     MODE_CLOUD_FIRST,
+    MODE_CLOUD_ONLY,
     MODE_LOCAL_FIRST,
     MODE_LOCAL_ONLY,
 )
@@ -463,6 +464,22 @@ async def test_power_state_and_availability() -> None:
     assert lamp.is_on is False
     power.is_on = None  # power entity unavailable
     assert lamp.is_on is False
+    assert not lamp.available
+
+
+async def test_power_cut_since_start() -> None:
+    """Not seen since Home Assistant started (power cut): still available.
+
+    Otherwise the light could not be switched on from Home Assistant.
+    """
+    lamp, power = _powered_lamp(_ble(), False)
+    lamp.ble = None
+    lamp.ble_present = False
+    assert not lamp.has_local
+    assert lamp.available
+    await lamp.turn_on()
+    assert power.calls == ["on"]
+    lamp.mode = MODE_CLOUD_ONLY
     assert not lamp.available
 
 
