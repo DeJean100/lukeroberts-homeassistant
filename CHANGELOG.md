@@ -1,13 +1,23 @@
 # Changelog
 
-## Unreleased
+## 0.3.0-dejean.6 (2026-11-19, fork DeJean100)
 
 - **Scene editor card** (`custom:luke-roberts-scene-card`), shipped with the
   integration and loaded automatically: edit a scene on a picture of the
   lamp (uplight segments and downlight spots), with *Spread* to blend a
   change softly, a live preview on the lamp, undo, save and save as new.
+  Always full width in sections dashboards; preview in the card picker.
 - Websocket commands for the card: `luke_roberts/scenes`, `preview`,
   `end_preview`, `save_scene`.
+- **`luke_roberts.test_bluetooth_link`**: read-only measurement of how much
+  of a full scene read arrives through a Bluetooth proxy, and where.
+- Fix: with a power switch, the lamp stayed *unavailable* when Home
+  Assistant started while its power was cut, so it could not be switched
+  on from Home Assistant.
+- Saving a scene through a lossy Bluetooth proxy: the check afterwards
+  accepts damaged copies that fit the written scene (error before, even
+  though the lamp had stored it). A created scene is marked as created
+  straight away.
 
 ## 0.3.0-dejean.5 (2026-11-19, fork DeJean100)
 

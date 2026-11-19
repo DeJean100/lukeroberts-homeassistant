@@ -258,6 +258,12 @@ checked with a Bluetooth capture of the app and on a Model F with firmware
 menu: pick a scene, then edit colours and brightness, rename, duplicate,
 restore it from a backup, or delete a scene Home Assistant created.
 
+**Bluetooth proxy check:** `luke_roberts.test_bluetooth_link` reads all
+scenes a few times (read-only) and returns how much arrived and where the
+gaps are. A direct Bluetooth link delivers everything; an ESPHome Bluetooth
+proxy on a busy or weak Wi-Fi link may drop messages. Scene reads repair
+that, but they get slower.
+
 **Scene editor card:** the integration ships a dashboard card, *Luke Roberts
 scene editor* (add it from the card picker; nothing to install). Tap the
 outer ring (uplight) or the spots (downlight) of the lamp picture, then change
