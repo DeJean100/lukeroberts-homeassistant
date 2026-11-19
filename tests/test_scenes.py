@@ -456,6 +456,52 @@ async def test_changes_are_retried_and_never_half_taken(hass: HomeAssistant) -> 
         await lamp.ble.disconnect()
 
 
+async def test_changes_rebuilt_from_damaged_copies(hass: HomeAssistant) -> None:
+    """No change read arrives intact, but two damaged copies rebuild it.
+
+    Also with two changed records, an empty (deleted) one among them.
+    """
+    client = FakeLampClient()
+    with (
+        patch(
+            "custom_components.luke_roberts.ble.establish_connection",
+            AsyncMock(return_value=client),
+        ),
+        patch("custom_components.luke_roberts.lamp.SYNC_CHANGES_TIMEOUT", 0.05),
+    ):
+        lamp = await _lamp(hass, client)
+        await lamp.read_scene_records()
+        client.change_record(static_record(1, "Lesen neu", 10))
+        client.change_record(bytes([0x01, 2, 0x10, 0, 0, 0, 0, 0]))
+        client.chunk = 2  # like the ESPHome proxy
+        tries = {"n": 0}
+
+        def drop(n: int) -> bool:
+            if n == 0:
+                tries["n"] += 1
+            # Every attempt loses a different chunk of the first record.
+            return n == 10 + 7 * tries["n"]
+
+        client.drop_chunk = drop
+        _, records = await lamp.read_scene_records()
+        assert records[1].raw == client.records[1]
+        assert records[2].is_empty
+        assert 2 <= tries["n"] < 10  # repetitive test data can need a third copy
+        await lamp.ble.disconnect()
+
+
+def test_changed_record_segments() -> None:
+    """Segments start at headers of any id; leading debris is skipped."""
+    first = static_record(4, "Vier", 10)
+    empty = bytes([0x01, 9, 0x10, 0, 0, 0, 0, 0])
+    stream = first[6:] + first + empty + first[:100]
+    segments = protocol.changed_record_segments(stream)
+    assert [(i, len(seg)) for i, seg in segments] == [(4, 178), (9, 8), (4, 100)]
+    assert protocol.intact_record(segments[0][1]).raw == first
+    assert protocol.intact_record(segments[2][1]) is None
+    assert protocol.changed_record_segments(b"") == []
+
+
 async def test_scene_writes_need_bluetooth(hass: HomeAssistant) -> None:
     """Without Bluetooth there is nothing to read or write."""
     lamp = LukeRobertsLamp("Lamp", MODE_LOCAL_ONLY, None, None, None)

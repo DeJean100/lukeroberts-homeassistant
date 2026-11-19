@@ -10,7 +10,7 @@ reports (undocumented command ``09``), and it can be refreshed from the cloud.
 from __future__ import annotations
 
 import asyncio
-from collections.abc import Awaitable, Callable
+from collections.abc import Awaitable, Callable, Iterable
 from dataclasses import dataclass, field
 import logging
 import time
@@ -668,7 +668,14 @@ class LukeRobertsLamp:
     async def _sync_changes(
         self, ble: LukeRobertsBle, cache: SceneCache
     ) -> SceneCache | None:
-        """Apply the scenes changed since the cache; None if a full read is needed."""
+        """Apply the scenes changed since the cache; None if a full read is needed.
+
+        Like a full read, intact records are collected over attempts and a
+        record that only arrived with gaps is rebuilt from two damaged copies.
+        """
+        collected: dict[int, protocol.SceneRecord] = {}
+        damaged: dict[int, list[bytes]] = {}
+        last: protocol.SyncDone | None = None
         for attempt in range(1, SYNC_CHANGES_ATTEMPTS + 1):
             done, stream = await ble.sync_scenes(
                 cache.revision, cache.database, SYNC_CHANGES_TIMEOUT
@@ -678,25 +685,54 @@ class LukeRobertsLamp:
             if done.database != cache.database or done.revision < cache.revision:
                 _LOGGER.debug("%s: scene database changed, reading all", self.name)
                 return None
-            try:
-                records = protocol.parse_scene_records(stream)
-            except protocol.SceneRecordError:
-                records = None
-            if records is None or len(records) != done.records:
-                _LOGGER.debug(
-                    "%s: scene changes incomplete (attempt %d, %d bytes)",
-                    self.name,
-                    attempt,
-                    len(stream),
-                )
-                continue
-            merged = dict(cache.records)
-            merged.update({record.scene_id: record for record in records})
-            return SceneCache(done.revision, done.database, merged)
+            if last is not None and (
+                done.revision != last.revision or done.records != last.records
+            ):
+                collected, damaged = {}, {}  # changed meanwhile, start over
+            last = done
+            await self._collect_records(
+                protocol.changed_record_segments(stream), collected, damaged
+            )
+            if len(collected) == done.records:
+                merged = dict(cache.records)
+                merged.update(collected)
+                return SceneCache(done.revision, done.database, merged)
+            _LOGGER.debug(
+                "%s: scene changes incomplete (attempt %d, %d bytes, %d of %d)",
+                self.name,
+                attempt,
+                len(stream),
+                len(collected),
+                done.records,
+            )
         raise HomeAssistantError(
             f"{self.name}: the scene changes did not arrive complete after "
             f"{SYNC_CHANGES_ATTEMPTS} attempts (weak Bluetooth link?); try again"
         )
+
+    @staticmethod
+    async def _collect_records(
+        segments: Iterable[tuple[int, bytes]],
+        collected: dict[int, protocol.SceneRecord],
+        damaged: dict[int, list[bytes]],
+    ) -> None:
+        """Add intact records; rebuild others from two damaged copies if unique."""
+        for scene_id, segment in segments:
+            if scene_id in collected:
+                continue
+            if (record := protocol.intact_record(segment)) is not None:
+                collected[scene_id] = record
+                continue
+            copies = damaged.setdefault(scene_id, [])
+            # Only pairs with the new copy; older pairs were tried before.
+            for earlier in copies:
+                record = await asyncio.get_running_loop().run_in_executor(
+                    None, protocol.merge_damaged_records, scene_id, [earlier, segment]
+                )
+                if record is not None:
+                    collected[scene_id] = record
+                    break
+            copies.append(segment)
 
     async def _sync_all(self, ble: LukeRobertsBle) -> SceneCache:
         """Read all scene slots, collecting intact records over several attempts."""
@@ -714,24 +750,11 @@ class LukeRobertsLamp:
             last = done
             collected.update(protocol.recover_scene_records(stream, done.records))
             # Scenes with gaps: rebuild from two damaged copies when unique.
-            for scene_id, segment in protocol.scene_segments(
-                stream, done.records
-            ).items():
-                if scene_id in collected:
-                    continue
-                copies = damaged.setdefault(scene_id, [])
-                # Only pairs with the new copy; older pairs were tried before.
-                for earlier in copies:
-                    record = await asyncio.get_running_loop().run_in_executor(
-                        None,
-                        protocol.merge_damaged_records,
-                        scene_id,
-                        [earlier, segment],
-                    )
-                    if record is not None:
-                        collected[scene_id] = record
-                        break
-                copies.append(segment)
+            await self._collect_records(
+                protocol.scene_segments(stream, done.records).items(),
+                collected,
+                damaged,
+            )
             _LOGGER.debug(
                 "%s: full scene read attempt %d: %d of %d slots",
                 self.name,

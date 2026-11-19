@@ -523,6 +523,36 @@ def scene_segments(stream: bytes, slots: int) -> dict[int, bytes]:
     return segments
 
 
+def changed_record_segments(stream: bytes) -> list[tuple[int, bytes]]:
+    """Each record of an incremental Sync as received, possibly with gaps.
+
+    An incremental Sync sends only the changed slots, so the ids are not
+    known in advance: a segment starts at each record header (at an even
+    offset, as notifications are dropped whole) and runs to the next header
+    or the end of the stream. Bytes before the first header are skipped.
+    """
+    starts = [
+        offset
+        for offset in range(0, len(stream) - SCENE_HEADER_LENGTH + 1, 2)
+        if _header_at(stream, offset, stream[offset + 1])
+    ]
+    if not starts:
+        return []
+    ends = [*starts[1:], len(stream)]
+    return [
+        (stream[start + 1], stream[start:end])
+        for start, end in zip(starts, ends, strict=True)
+    ]
+
+
+def intact_record(segment: bytes) -> SceneRecord | None:
+    """The segment as a record if it has its exact length and looks sane."""
+    length = SCENE_RECORD_LENGTH.get(segment[3])  # type: ignore[call-overload]
+    if length is None or len(segment) != length or not _plausible(segment):
+        return None
+    return SceneRecord(bytes(segment))
+
+
 def _unique_supersequence(
     first: list[bytes], second: list[bytes]
 ) -> list[bytes] | None:

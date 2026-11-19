@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+- Reading changed scenes through a Bluetooth proxy now repairs damaged
+  copies like the full read does; checking a written scene no longer fails
+  after 10 lossy attempts (seen on the lamp: 3 s instead of an error).
 - **`luke_roberts.preview_scene`**: show a static scene, optionally with changed colours
   and brightness, on the lamp without saving it (same fields as `edit_scene`;
   selecting a scene ends the preview). Format captured from the app.
