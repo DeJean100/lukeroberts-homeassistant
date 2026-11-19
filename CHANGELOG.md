@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+- **`luke_roberts.preview_scene`**: show a static scene, optionally with changed colours
+  and brightness, on the lamp without saving it (same fields as `edit_scene`;
+  selecting a scene ends the preview). Format captured from the app.
 - **`luke_roberts.edit_scene`**: change the downlight colour temperature and
   brightness, the uplight colour (or white) and the uplight brightness of a
   static scene. Brightness keeps the scene's pattern. Backup first, read

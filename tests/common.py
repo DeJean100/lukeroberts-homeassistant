@@ -13,6 +13,7 @@ from homeassistant.components.bluetooth import BluetoothServiceInfoBleak
 
 from custom_components.luke_roberts.const import (
     API_CHAR_UUID,
+    LIVE_MODEL_CHAR_UUID,
     SCENE_CHAR_UUID,
     SCENE_RECORD_CHAR_UUID,
     SERVICE_UUID,
@@ -84,6 +85,7 @@ class FakeLampClient:
     def __init__(self) -> None:
         self.is_connected = True
         self.written: list[bytes] = []
+        self.live_model: list[bytes] = []
         self.scenes: dict[int, str] = {
             scene_id: name for scene_id, (_next, name) in self.SCENES.items()
         }
@@ -222,6 +224,10 @@ class FakeLampClient:
         self.scene_callback(None, bytearray([scene_id]))
 
     async def write_gatt_char(self, uuid: str, data: bytes, response: bool) -> None:
+        if uuid == LIVE_MODEL_CHAR_UUID:
+            assert not response  # the app writes without response
+            self.live_model.append(bytes(data))
+            return
         if uuid == SCENE_RECORD_CHAR_UUID:
             reply = self._write_record(bytes(data))
         else:

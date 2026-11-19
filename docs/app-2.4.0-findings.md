@@ -98,8 +98,20 @@ otherwise).
 * wireType 0 (8 bytes, header only): delete; also how empty slots are reported
 * New scenes are written with sceneId 254.
 
-Preview without saving: write `64, u16 kelvin, 64 B uplight, 84 B downlight`
-to `…45` (*guess*, not captured yet).
+Preview without saving (live light model, `…45`, write without response;
+captured from the app while editing a scene, 2026-11-18, and verified on the
+lamp through Home Assistant and the ESPHome proxy, 2026-11-19):
+
+* `64 <u16 kelvin> <64 B uplight> <84 B downlight>` (151 bytes): show a whole
+  light model; the bytes are those of a static record after the header. The
+  app sends it with all zeros when a new scene starts, and with the scene's
+  light after saving.
+* `02 (spot, brightness)…`: change single downlight spots (0..83), sent many
+  times per second while the user paints with a finger.
+* `03 (segment, brightness)…`: change single uplight segments (0..15).
+* Nothing is stored: the scene revision does not change. Selecting a scene
+  (`…44` or the API) ends the preview. Each write takes ~0.7 s through HA and
+  the proxy.
 
 ### Verified on a lamp (Model F, firmware 1.2.2, app on Android 17)
 

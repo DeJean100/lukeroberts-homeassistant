@@ -34,6 +34,7 @@ from .const import (
     DIS_SERIAL_UUID,
     DIS_SOFTWARE_UUID,
     KEEPALIVE_INTERVAL,
+    LIVE_MODEL_CHAR_UUID,
     RESPONSE_TIMEOUT,
     SCENE_CHAR_UUID,
     SCENE_RECORD_CHAR_UUID,
@@ -293,6 +294,15 @@ class LukeRobertsBle:
         self._last_command = time.monotonic()
         self._schedule_keepalive()
         return protocol.parse_scene_write(response)
+
+    async def write_live_model(self, frame: bytes) -> None:
+        """Show light on the lamp without saving it (write without response)."""
+        async with self._lock:
+            client = await self._ensure_connected()
+            _LOGGER.debug("%s: -> 2845 %s", self._name, frame.hex(" "))
+            await client.write_gatt_char(LIVE_MODEL_CHAR_UUID, frame, response=False)
+        self._last_command = time.monotonic()
+        self._schedule_keepalive()
 
     async def read_device_info(self) -> dict[str, str]:
         """Read the Device Information Service, skipping missing fields."""

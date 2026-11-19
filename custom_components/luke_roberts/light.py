@@ -31,6 +31,7 @@ from .const import (
     SERVICE_DUPLICATE_SCENE,
     SERVICE_EDIT_SCENE,
     SERVICE_IMMEDIATE_LIGHT,
+    SERVICE_PREVIEW_SCENE,
     SERVICE_RENAME_SCENE,
     SERVICE_RESTORE_SCENE,
 )
@@ -108,17 +109,19 @@ async def async_setup_entry(
     platform.async_register_entity_service(
         SERVICE_DELETE_SCENE, SCENE_SCHEMA, "async_delete_scene"
     )
-    platform.async_register_entity_service(
-        SERVICE_EDIT_SCENE,
-        {
-            **SCENE_SCHEMA,
-            **{
-                key: value
-                for key, value in IMMEDIATE_LIGHT_SCHEMA.items()
-                if str(key) != ATTR_DURATION
-            },
+    edit_schema = {
+        **SCENE_SCHEMA,
+        **{
+            key: value
+            for key, value in IMMEDIATE_LIGHT_SCHEMA.items()
+            if str(key) != ATTR_DURATION
         },
-        "async_edit_scene",
+    }
+    platform.async_register_entity_service(
+        SERVICE_EDIT_SCENE, edit_schema, "async_edit_scene"
+    )
+    platform.async_register_entity_service(
+        SERVICE_PREVIEW_SCENE, edit_schema, "async_preview_scene"
     )
     platform.async_register_entity_service(
         SERVICE_DUPLICATE_SCENE,
@@ -310,21 +313,32 @@ class LukeRobertsLight(LukeRobertsEntity, LightEntity, RestoreEntity):
 
     async def async_edit_scene(self, **kwargs: Any) -> None:
         """Change colours and brightness of a static scene (backup first)."""
-        if ATTR_UPLIGHT_HS_COLOR in kwargs and ATTR_UPLIGHT_KELVIN in kwargs:
-            raise ServiceValidationError(
-                "Give either uplight_hs_color or uplight_kelvin, not both"
-            )
-        color: tuple[int, int] | None = None
-        if ATTR_UPLIGHT_HS_COLOR in kwargs:
-            color = protocol.uplight_hs(*kwargs[ATTR_UPLIGHT_HS_COLOR])
-        elif ATTR_UPLIGHT_KELVIN in kwargs:
-            color = protocol.uplight_white(kwargs[ATTR_UPLIGHT_KELVIN])
-        changes = {
-            "kelvin": kwargs.get(ATTR_DOWNLIGHT_KELVIN),
-            "uplight_color": color,
-            "uplight_brightness": kwargs.get(ATTR_UPLIGHT_BRIGHTNESS),
-            "downlight_brightness": kwargs.get(ATTR_DOWNLIGHT_BRIGHTNESS),
-        }
+        changes = _scene_changes(kwargs)
         if all(value is None for value in changes.values()):
             raise ServiceValidationError("Nothing to change")
         await self._lamp.edit_scene(self._scene_id(kwargs[ATTR_SCENE]), **changes)
+
+    async def async_preview_scene(self, **kwargs: Any) -> None:
+        """Show a static scene, with optional changes, without saving it."""
+        await self._lamp.preview_scene(
+            self._scene_id(kwargs[ATTR_SCENE]), **_scene_changes(kwargs)
+        )
+
+
+def _scene_changes(kwargs: dict[str, Any]) -> dict[str, Any]:
+    """The edit_scene / preview_scene fields as LukeRobertsLamp arguments."""
+    if ATTR_UPLIGHT_HS_COLOR in kwargs and ATTR_UPLIGHT_KELVIN in kwargs:
+        raise ServiceValidationError(
+            "Give either uplight_hs_color or uplight_kelvin, not both"
+        )
+    color: tuple[int, int] | None = None
+    if ATTR_UPLIGHT_HS_COLOR in kwargs:
+        color = protocol.uplight_hs(*kwargs[ATTR_UPLIGHT_HS_COLOR])
+    elif ATTR_UPLIGHT_KELVIN in kwargs:
+        color = protocol.uplight_white(kwargs[ATTR_UPLIGHT_KELVIN])
+    return {
+        "kelvin": kwargs.get(ATTR_DOWNLIGHT_KELVIN),
+        "uplight_color": color,
+        "uplight_brightness": kwargs.get(ATTR_UPLIGHT_BRIGHTNESS),
+        "downlight_brightness": kwargs.get(ATTR_DOWNLIGHT_BRIGHTNESS),
+    }

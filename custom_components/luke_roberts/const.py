@@ -18,6 +18,7 @@ SCENE_CHAR_UUID: Final = "44092844-0567-11e6-b862-0002a5d5c51b"
 # Lamp Control API; verified on a Model F with firmware 1.2.2.
 SETTINGS_CHAR_UUID: Final = "44092841-0567-11e6-b862-0002a5d5c51b"
 SCENE_RECORD_CHAR_UUID: Final = "44092843-0567-11e6-b862-0002a5d5c51b"
+LIVE_MODEL_CHAR_UUID: Final = "44092845-0567-11e6-b862-0002a5d5c51b"
 # How long a Sync may take: about 2 s for 20 scenes through a proxy.
 SYNC_TIMEOUT: Final = 15.0
 # A Sync answer that has not come this long after the last record is lost.
@@ -96,3 +97,4 @@ SERVICE_RESTORE_SCENE: Final = "restore_scene"
 SERVICE_DUPLICATE_SCENE: Final = "duplicate_scene"
 SERVICE_DELETE_SCENE: Final = "delete_scene"
 SERVICE_EDIT_SCENE: Final = "edit_scene"
+SERVICE_PREVIEW_SCENE: Final = "preview_scene"

@@ -700,3 +700,59 @@ async def test_edit_action(hass: HomeAssistant) -> None:
                     {ATTR_ENTITY_ID: LIGHT, "scene": "Lesen", **data},
                     blocking=True,
                 )
+
+
+# Captured from app 2.4.0: the scene record it saved, and the live model it
+# wrote to preview that scene afterwards.
+CAPTURED_RECORD = bytes.fromhex(
+    "01fe0001000000008c0aa2701f92a2701f94a2701fa2a2701f82a2701f93a2701fa9a2701f8fa2701fd5a2701fffa2701fffa2701fffa2701f7da2701f82a2701f9ca2701fa1a2701f8e000000000000000000000000000029be000000000000001fffffffff0000000000000000d3ffffffffffb3000000000000000032ffffffac400021a100000000000000000000005fbc00000000000000000000004e65770000000000000000000000000000000000"
+)
+CAPTURED_LIVE_MODEL = bytes.fromhex(
+    "648c0aa2701f92a2701f94a2701fa2a2701f82a2701f93a2701fa9a2701f8fa2701fd5a2701fffa2701fffa2701fffa2701f7da2701f82a2701f9ca2701fa1a2701f8e000000000000000000000000000029be000000000000001fffffffff0000000000000000d3ffffffffffb3000000000000000032ffffffac400021a100000000000000000000005fbc0000000000000000000000"
+)
+
+
+def test_live_model_matches_the_app() -> None:
+    """The preview frame is byte-identical to what the app writes."""
+    record = protocol.SceneRecord(CAPTURED_RECORD)
+    light = protocol.StaticScene.from_record(record)
+    assert light.live_model(record) == CAPTURED_LIVE_MODEL
+
+
+async def test_preview_scene(hass: HomeAssistant) -> None:
+    """preview_scene writes a live model with the changes and saves nothing."""
+    client = FakeLampClient()
+    await _setup_ble(hass, client)
+    records = dict(client.records)
+    with patch(
+        "custom_components.luke_roberts.ble.establish_connection",
+        AsyncMock(return_value=client),
+    ):
+        await hass.services.async_call(
+            DOMAIN,
+            "preview_scene",
+            {ATTR_ENTITY_ID: LIGHT, "scene": "Lesen", "downlight_kelvin": 3500},
+            blocking=True,
+        )
+        record = protocol.SceneRecord(records[1])
+        light = protocol.StaticScene.from_record(record)
+        light.kelvin = 3500
+        assert client.live_model == [light.live_model(record)]
+        assert client.record_writes == []
+        assert client.records == records
+
+        # Without changes it shows the scene as stored.
+        await hass.services.async_call(
+            DOMAIN,
+            "preview_scene",
+            {ATTR_ENTITY_ID: LIGHT, "scene": "Lesen"},
+            blocking=True,
+        )
+        assert client.live_model[-1][1:] == records[1][8:158]
+        with pytest.raises(ServiceValidationError):
+            await hass.services.async_call(
+                DOMAIN,
+                "preview_scene",
+                {ATTR_ENTITY_ID: LIGHT, "scene": 3, "downlight_kelvin": 3000},
+                blocking=True,
+            )

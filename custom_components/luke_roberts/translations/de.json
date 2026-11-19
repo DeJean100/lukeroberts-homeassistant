@@ -353,6 +353,36 @@
           "description": "Helligkeit des hellsten Downlight Spots."
         }
       }
+    },
+    "preview_scene": {
+      "name": "Szene vorschauen",
+      "description": "Eine statische Szene der Lampe, optional mit geänderten Farben und Helligkeit, anzeigen ohne sie zu speichern (nur Bluetooth). Gleiche Felder wie „Szene bearbeiten“. Die Lampe zeigt sie, bis eine Szene gewählt wird.",
+      "fields": {
+        "scene": {
+          "name": "Szene",
+          "description": "Name oder ID der Szene."
+        },
+        "uplight_hs_color": {
+          "name": "Uplight Farbton/Sättigung",
+          "description": "[Farbton 0-360, Sättigung 0-100] für alle Uplight Segmente."
+        },
+        "uplight_kelvin": {
+          "name": "Uplight Farbtemperatur",
+          "description": "Weißes Uplight statt einer Farbe."
+        },
+        "uplight_brightness": {
+          "name": "Uplight Helligkeit",
+          "description": "Helligkeit des hellsten Uplight Segments."
+        },
+        "downlight_kelvin": {
+          "name": "Downlight Farbtemperatur",
+          "description": "Farbtemperatur des direkten Lichts."
+        },
+        "downlight_brightness": {
+          "name": "Downlight Helligkeit",
+          "description": "Helligkeit des hellsten Downlight Spots."
+        }
+      }
     }
   },
   "exceptions": {

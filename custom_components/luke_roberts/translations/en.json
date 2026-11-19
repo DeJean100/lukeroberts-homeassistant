@@ -353,6 +353,36 @@
           "description": "Brightness of the brightest downlight spot."
         }
       }
+    },
+    "preview_scene": {
+      "name": "Preview scene",
+      "description": "Show a static scene stored in the lamp, optionally with changed colours and brightness, without saving it (Bluetooth only). Takes the same fields as Edit scene. The lamp shows it until a scene is selected; try a change here first, then save it with Edit scene.",
+      "fields": {
+        "scene": {
+          "name": "Scene",
+          "description": "Name or id of the scene."
+        },
+        "uplight_hs_color": {
+          "name": "Uplight hue/saturation",
+          "description": "[hue 0-360, saturation 0-100] for all uplight segments."
+        },
+        "uplight_kelvin": {
+          "name": "Uplight colour temperature",
+          "description": "White uplight instead of a colour."
+        },
+        "uplight_brightness": {
+          "name": "Uplight brightness",
+          "description": "Brightness of the brightest uplight segment."
+        },
+        "downlight_kelvin": {
+          "name": "Downlight colour temperature",
+          "description": "Colour temperature of the direct light."
+        },
+        "downlight_brightness": {
+          "name": "Downlight brightness",
+          "description": "Brightness of the brightest downlight spot."
+        }
+      }
     }
   },
   "exceptions": {

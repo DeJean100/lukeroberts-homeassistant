@@ -811,39 +811,57 @@ class LukeRobertsLamp:
         async with self._scene_lock:
             revision, records = await self.read_scene_records()
             assert self.scene_backups is not None
-            record = records.get(scene_id)
-            if record is None or record.scene_type != protocol.SceneType.STATIC:
-                raise ServiceValidationError(
-                    f"{self.name}: scene {scene_id} is not a static scene; only "
-                    "static scenes can be edited"
-                )
-            light = protocol.StaticScene.from_record(record)
-            if kelvin is not None:
-                light.kelvin = kelvin
-            if uplight_color is not None:
-                light.uplight = [
-                    (uplight_color[0], uplight_color[1], brightness)
-                    for _sat, _value, brightness in light.uplight
-                ]
-            if uplight_brightness is not None:
-                levels = protocol.scale_levels(
-                    [segment[2] for segment in light.uplight], uplight_brightness
-                )
-                light.uplight = [
-                    (sat, value, level)
-                    for (sat, value, _old), level in zip(
-                        light.uplight, levels, strict=True
-                    )
-                ]
-            if downlight_brightness is not None:
-                light.spots = protocol.scale_levels(light.spots, downlight_brightness)
-            edited = light.apply(record)
+            record = self._static_record(records, scene_id, "edited")
+            edited = _edit_light(
+                protocol.StaticScene.from_record(record),
+                kelvin=kelvin,
+                uplight_color=uplight_color,
+                uplight_brightness=uplight_brightness,
+                downlight_brightness=downlight_brightness,
+            ).apply(record)
             if edited == record:
                 return
             await self.scene_backups.add(
                 records, revision, f"before editing scene {scene_id}"
             )
             await self._write_scene(edited)
+
+    async def preview_scene(
+        self,
+        scene_id: int,
+        *,
+        kelvin: int | None = None,
+        uplight_color: tuple[int, int] | None = None,
+        uplight_brightness: int | None = None,
+        downlight_brightness: int | None = None,
+    ) -> None:
+        """Show a static scene, with optional changes, without saving it.
+
+        Takes the same changes as :meth:`edit_scene`. The lamp shows the
+        light until a scene is selected (or the lamp is switched).
+        """
+        async with self._scene_lock:
+            _revision, records = await self.read_scene_records()
+            record = self._static_record(records, scene_id, "previewed")
+            light = _edit_light(
+                protocol.StaticScene.from_record(record),
+                kelvin=kelvin,
+                uplight_color=uplight_color,
+                uplight_brightness=uplight_brightness,
+                downlight_brightness=downlight_brightness,
+            )
+            await self._scene_ble().write_live_model(light.live_model(record))
+
+    def _static_record(
+        self, records: dict[int, protocol.SceneRecord], scene_id: int, verb: str
+    ) -> protocol.SceneRecord:
+        record = records.get(scene_id)
+        if record is None or record.scene_type != protocol.SceneType.STATIC:
+            raise ServiceValidationError(
+                f"{self.name}: scene {scene_id} is not a static scene; only "
+                f"static scenes can be {verb}"
+            )
+        return record
 
     async def restore_scene(self, scene_id: int) -> SceneBackup:
         """Write a scene back as it was in the newest backup that differs.
@@ -1024,3 +1042,32 @@ class LukeRobertsLamp:
         if changed:
             self.notify()
         return cloud_state
+
+
+def _edit_light(
+    light: protocol.StaticScene,
+    *,
+    kelvin: int | None,
+    uplight_color: tuple[int, int] | None,
+    uplight_brightness: int | None,
+    downlight_brightness: int | None,
+) -> protocol.StaticScene:
+    """Apply the changes of edit_scene / preview_scene to a scene's light."""
+    if kelvin is not None:
+        light.kelvin = kelvin
+    if uplight_color is not None:
+        light.uplight = [
+            (uplight_color[0], uplight_color[1], brightness)
+            for _sat, _value, brightness in light.uplight
+        ]
+    if uplight_brightness is not None:
+        levels = protocol.scale_levels(
+            [segment[2] for segment in light.uplight], uplight_brightness
+        )
+        light.uplight = [
+            (sat, value, level)
+            for (sat, value, _old), level in zip(light.uplight, levels, strict=True)
+        ]
+    if downlight_brightness is not None:
+        light.spots = protocol.scale_levels(light.spots, downlight_brightness)
+    return light

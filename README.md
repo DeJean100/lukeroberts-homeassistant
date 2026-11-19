@@ -250,6 +250,9 @@ checked with a Bluetooth capture of the app and on a Model F with firmware
   (`uplight_hs_color` or `uplight_kelvin` for white) and uplight brightness.
   Only the given values change; brightness scales the scene's pattern so
   its brightest spot or segment gets the value.
+- `luke_roberts.preview_scene` takes the same fields but only shows the
+  result on the lamp, without saving it: try a change, then save it with
+  `edit_scene`. Selecting any scene ends the preview.
 
 **Without YAML:** the lamp's **Configure** dialog has a *Manage scenes*
 menu: pick a scene, then edit colours and brightness, rename, duplicate,

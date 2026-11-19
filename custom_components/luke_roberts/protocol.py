@@ -603,6 +603,15 @@ MIN_SCENE_KELVIN = 2700
 MAX_SCENE_KELVIN = 4000
 
 
+# Live light model (preview without saving), captured from app 2.4.0: a full
+# model, or changes to single downlight spots (02) or uplight segments (03)
+# as ``(index, brightness)`` pairs.
+LIVE_MODEL_FULL = 0x64
+LIVE_MODEL_SPOTS = 0x02
+LIVE_MODEL_SEGMENTS = 0x03
+LIVE_MODEL_LIGHT_LENGTH = 2 + 4 * UPLIGHT_SEGMENTS + DOWNLIGHT_SPOTS
+
+
 @dataclass(slots=True)
 class StaticScene:
     """The light of a static scene record.
@@ -654,6 +663,19 @@ class StaticScene:
         body += bytes(_clamp(spot, 0, 255) for spot in self.spots)
         raw = record.raw
         return SceneRecord(raw[:SCENE_HEADER_LENGTH] + body + raw[-SCENE_NAME_LENGTH:])
+
+    def live_model(self, template: SceneRecord) -> bytes:
+        """Frame that shows this light on the lamp without saving it.
+
+        Written to the live light model characteristic, as the app does while
+        a scene is being edited: ``64``, then the record's light (kelvin, 16
+        uplight segments, 84 spots). Selecting a scene ends the preview.
+        """
+        light = self.apply(template).raw
+        return (
+            bytes([LIVE_MODEL_FULL])
+            + light[SCENE_HEADER_LENGTH : SCENE_HEADER_LENGTH + LIVE_MODEL_LIGHT_LENGTH]
+        )
 
 
 def scale_levels(levels: list[int], percent: int) -> list[int]:
