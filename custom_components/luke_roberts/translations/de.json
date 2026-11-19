@@ -107,14 +107,15 @@
         }
       },
       "scene_action": {
-        "title": "{scene}",
+        "title": "Szene ändern",
         "menu_options": {
           "scene_edit": "Farben und Helligkeit bearbeiten",
           "scene_rename": "Umbenennen",
           "scene_duplicate": "Duplizieren",
           "scene_restore": "Aus einer Sicherung wiederherstellen",
           "scene_delete": "Löschen"
-        }
+        },
+        "description": "Was möchtest du mit **{scene}** machen?"
       },
       "scene_rename": {
         "title": "Szene umbenennen",

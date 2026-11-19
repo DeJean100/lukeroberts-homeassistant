@@ -107,14 +107,15 @@
         }
       },
       "scene_action": {
-        "title": "{scene}",
+        "title": "Change scene",
         "menu_options": {
           "scene_edit": "Edit colours and brightness",
           "scene_rename": "Rename",
           "scene_duplicate": "Duplicate",
           "scene_restore": "Restore from a backup",
           "scene_delete": "Delete"
-        }
+        },
+        "description": "What do you want to do with **{scene}**?"
       },
       "scene_rename": {
         "title": "Rename scene",

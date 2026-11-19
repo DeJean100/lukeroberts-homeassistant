@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import json
+from pathlib import Path
 from unittest.mock import AsyncMock, patch
 
 from homeassistant.core import HomeAssistant
@@ -175,3 +177,13 @@ async def test_menu_while_the_lamp_is_away(hass: HomeAssistant, client) -> None:
     result = await flow.async_configure(result["flow_id"], {"name": "Neu"})
     assert result["reason"] == "scene_failed"
     assert "not reachable" in result["description_placeholders"]["error"]
+
+
+def test_menu_titles_have_no_placeholders() -> None:
+    """The frontend fills placeholders in a menu's description, not its title."""
+    root = Path(__file__).parent.parent / "custom_components" / "luke_roberts"
+    menus = ("init", "scene_action")
+    for name in ("strings.json", "translations/en.json", "translations/de.json"):
+        steps = json.loads((root / name).read_text())["options"]["step"]
+        for step in menus:
+            assert "{" not in steps[step]["title"], (name, step)
